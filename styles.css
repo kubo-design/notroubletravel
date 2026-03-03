@@ -919,6 +919,7 @@ td {
 @media (max-width: 640px) {
   body {
     padding: 10px;
+    overflow-x: hidden;
   }
 
   .card {
@@ -928,10 +929,44 @@ td {
 
   .hero {
     align-items: center;
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .day-io-all {
+    margin-left: auto;
+    gap: 6px;
   }
 
   .day-io-all button {
     flex: 0 0 auto;
+    min-height: 34px;
+    padding: 6px 9px;
+  }
+
+  .day-card-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .day-card-head .day-title {
+    min-width: 0;
+  }
+
+  .day-card-head .day-route-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .day-card-head .day-actions {
+    margin-left: 0;
+    justify-self: end;
   }
 
   h2 {
@@ -953,13 +988,27 @@ td {
   }
 
   .goal-action-row {
-    grid-template-columns: auto auto minmax(120px, 1fr) auto;
+    grid-template-columns: 1fr auto;
     gap: 8px;
   }
 
+  .goal-action-row button[data-day-role="destination-history-btn"] {
+    grid-column: 1 / 2;
+  }
+
+  .goal-action-row .origin-edit-btn {
+    grid-column: 2 / 3;
+    justify-self: end;
+  }
+
   .goal-action-row input {
-    grid-column: auto;
+    grid-column: 1 / 2;
     min-width: 0;
+  }
+
+  .goal-action-row .goal-register-btn {
+    grid-column: 2 / 3;
+    justify-self: end;
   }
 
   .hotel-choice-row {
@@ -998,7 +1047,13 @@ td {
   }
 
   .route-waypoint-head {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+
+  .route-waypoint-head .route-point-input {
+    flex: 1 1 100%;
+    min-width: 0;
   }
 
   .route-waypoint-history-tools {
@@ -1011,6 +1066,13 @@ td {
 
   .route-actions {
     justify-content: flex-start;
+  }
+
+  .route-segment-only {
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
   }
 
   .scroll {
