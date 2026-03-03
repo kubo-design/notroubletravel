@@ -674,7 +674,14 @@ function normalizeStoredHistories() {
 }
 
 function renderTopHistoryDropdown(target) {
-  const list = getHistoryByTarget(target);
+  let list = getHistoryByTarget(target);
+  if (target === "origin") {
+    const defaultName = (state.defaultOrigin || "").trim();
+    const merged = [defaultName, ...(Array.isArray(list) ? list : [])]
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+    list = [...new Set(merged)];
+  }
   const dropdown =
     target === "origin"
       ? els.originHistoryDropdown
@@ -704,7 +711,14 @@ function renderTopHistoryDropdown(target) {
 
 function renderTopHistoryDropdownForElement(target, dropdown) {
   if (!dropdown) return;
-  const list = getHistoryByTarget(target);
+  let list = getHistoryByTarget(target);
+  if (target === "origin") {
+    const defaultName = (state.defaultOrigin || "").trim();
+    const merged = [defaultName, ...(Array.isArray(list) ? list : [])]
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+    list = [...new Set(merged)];
+  }
   if (!list.length) {
     dropdown.innerHTML = "<span class='muted'>履歴がありません</span>";
     return;
