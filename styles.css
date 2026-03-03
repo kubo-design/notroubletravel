@@ -774,9 +774,29 @@ td {
 
 .route-waypoint-history-tools {
   display: grid;
-  grid-template-columns: auto auto minmax(120px, 1fr);
+  grid-template-columns: auto auto auto;
   gap: 8px;
   align-items: center;
+}
+
+.route-actions.route-waypoint-search-row {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-start;
+  overflow-x: auto;
+}
+
+.route-actions.route-waypoint-search-row > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.route-actions.route-waypoint-search-row .route-url-input {
+  flex: 0 1 180px;
+  width: 180px;
+  min-width: 96px;
 }
 
 .route-waypoint-actions,
@@ -840,7 +860,7 @@ td {
 
 .route-history-tools.route-waypoint-history-tools {
   display: grid;
-  grid-template-columns: auto auto minmax(120px, 1fr);
+  grid-template-columns: auto auto auto;
   gap: 8px;
   align-items: center;
 }
@@ -991,7 +1011,13 @@ td {
   }
 
   .route-waypoint-history-tools {
-    grid-template-columns: auto auto minmax(90px, 1fr);
+    grid-template-columns: auto auto auto;
+  }
+
+  .route-actions.route-waypoint-search-row .route-url-input {
+    flex-basis: 150px;
+    width: 150px;
+    min-width: 88px;
   }
 
   .route-actions {
@@ -1187,12 +1213,14 @@ td {
   }
 
   .route-waypoint-history-tools {
-    grid-template-columns: auto auto minmax(120px, 1fr);
+    grid-template-columns: auto auto auto;
     align-items: center;
   }
 
-  .route-waypoint-history-tools .route-url-input {
-    grid-column: auto;
+  .route-actions.route-waypoint-search-row .route-url-input {
+    flex-basis: 130px;
+    width: 130px;
+    min-width: 80px;
   }
 
   .route-actions {

@@ -583,21 +583,7 @@ function suggestCandidatesFromPastedUrl(target, sourceUrl = "") {
 }
 
 function openMapAndShowUrlInput(target) {
-  if (target === "origin") {
-    if (els.originMapUrlWrap) {
-      els.originMapUrlWrap.classList.remove("hidden");
-    }
-    if (els.originMapUrlInput) {
-      window.setTimeout(() => els.originMapUrlInput.focus(), 0);
-    }
-  } else if (target === "destination") {
-    if (els.destinationMapUrlWrap) {
-      els.destinationMapUrlWrap.classList.remove("hidden");
-    }
-    if (els.destinationMapUrlInput) {
-      window.setTimeout(() => els.destinationMapUrlInput.focus(), 0);
-    }
-  }
+  void target;
   openMapPicker("https://www.google.com/maps");
 }
 
@@ -1912,7 +1898,7 @@ function buildRouteListHtmlForDay(dayIndex) {
           <div class="route-history-tools route-waypoint-history-tools">
             <button type="button" class="ghost tiny" data-open-history="${key}">履歴から</button>
             <button type="button" class="ghost tiny" data-edit-history="${key}">☰</button>
-            <input type="url" class="route-url-input" data-point-url="${dayIndex}:${sourceIndex}" value="${point.url || ""}" placeholder="参考 URL" />
+            <button type="button" class="tiny route-btn-black" data-url-suggest="${dayIndex}:${sourceIndex}">MAPから</button>
           </div>
           <div class="route-history-dropdown ${state.activeHistoryDropdownIndex === key ? "" : "hidden"}">
             ${
@@ -1924,10 +1910,10 @@ function buildRouteListHtmlForDay(dayIndex) {
                 : "<span class='muted'>履歴がありません</span>"
             }
           </div>
-          <div class="route-actions route-waypoint-actions">
-            <button type="button" class="tiny route-btn-black" data-url-suggest="${dayIndex}:${sourceIndex}">MAPから</button>
+          <div class="route-actions route-waypoint-search-row">
             <button type="button" class="tiny ${point.candidates.length ? "route-btn-green-active" : "route-btn-green"}" data-google-suggest="${dayIndex}:${sourceIndex}">${point.candidates.length ? "閉じる" : "名称候補"}</button>
             <button type="button" class="tiny route-btn-black" data-google-search="${dayIndex}:${sourceIndex}">Google検索</button>
+            <input type="url" class="route-url-input" data-point-url="${dayIndex}:${sourceIndex}" value="${point.url || ""}" placeholder="参考 URL" />
           </div>
           <div class="route-candidates">
             ${
@@ -3097,28 +3083,7 @@ els.routeList.addEventListener("click", (e) => {
 
   const urlSuggestBtn = e.target.closest("button[data-url-suggest]");
   if (urlSuggestBtn) {
-    const { dayIndex, pointIndex } = parseDayAndIndex(urlSuggestBtn.dataset.urlSuggest);
-    setActiveDay(dayIndex);
-    const current = ensurePointObject(state.transportPlan.points[pointIndex]);
-    const sourceUrl = (current.url || "").trim();
-    const urlInput = els.routeList.querySelector(`input[data-point-url="${dayIndex}:${pointIndex}"]`);
-    if (urlInput) {
-      urlInput.focus();
-    }
     openMapPicker("https://www.google.com/maps");
-    if (!sourceUrl) {
-      setStatus("GoogleMapのURLをこの経由地のURL欄に貼り付けて、もう一度「MAPから」を押してください。", true);
-      return;
-    }
-    const candidates = extractNameCandidatesFromUrl(sourceUrl);
-    if (!candidates.length) {
-      setStatus("URLから候補を抽出できませんでした。", true);
-      return;
-    }
-    state.transportPlan.points[pointIndex] = { ...current, url: sourceUrl, candidates };
-    renderRouteList();
-    renderTransportDetail();
-    setStatus("URLから名称候補を取得しました。");
     return;
   }
 
