@@ -520,16 +520,18 @@ function setOriginInlineEditMode(enabled) {
   if (!state.originInlineEditMode) {
     els.defaultOriginInput.value = state.defaultOrigin || "";
   }
-  els.saveDefaultOriginBtn.textContent = state.originInlineEditMode ? "SELECT" : "DEFAULT";
+  els.saveDefaultOriginBtn.textContent = "DEFAULT";
 }
 
 function renderOriginInlineEditor() {
   if (!els.originInlineHistoryList || !els.defaultOriginInput) return;
   const defaultName = (state.defaultOrigin || "").trim();
-  const historyList = (state.originHistory || []).filter((name) => name && name !== defaultName);
+  const historyList = (state.originHistory || [])
+    .map((name, sourceIndex) => ({ name, sourceIndex }))
+    .filter(({ name }) => name && name !== defaultName);
   if (!defaultName && historyList.length) {
-    saveDefaultOrigin(historyList[0]);
-    state.originHistory = historyList.slice(1);
+    saveDefaultOrigin(historyList[0].name);
+    state.originHistory = historyList.slice(1).map((item) => item.name);
     saveJson("ntt-origin-history", state.originHistory);
   }
 
@@ -540,9 +542,13 @@ function renderOriginInlineEditor() {
   if (defaultCheckbox) {
     defaultCheckbox.checked = checkedDefault;
   }
+  if (els.saveDefaultOriginBtn) {
+    els.saveDefaultOriginBtn.classList.add("is-default");
+    els.saveDefaultOriginBtn.classList.remove("is-not-default");
+  }
 
   els.originInlineHistoryList.innerHTML = historyList
-    .map((name, idx) => {
+    .map(({ name, sourceIndex }, idx) => {
       const key = encodeURIComponent(name);
       const checked = Boolean(state.originInlineChecks[name]);
       return `
@@ -550,11 +556,53 @@ function renderOriginInlineEditor() {
           <label class="origin-inline-check-wrap">
             <input type="checkbox" data-origin-inline-check-name="${key}" ${checked ? "checked" : ""} />
           </label>
-          <span class="origin-inline-name">${name}</span>
+          <input
+            type="text"
+            class="origin-inline-name-input"
+            data-origin-inline-source-index="${sourceIndex}"
+            value="${escapeHtml(name)}"
+          />
+          <button
+            type="button"
+            class="origin-default-btn is-not-default"
+            data-set-default-origin="${key}"
+          >DEFAULT</button>
         </div>
       `;
     })
     .join("");
+}
+
+function renameOriginHistoryBySourceIndex(sourceIndex, nextNameRaw) {
+  const idx = Number(sourceIndex);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= state.originHistory.length) return;
+  const prev = (state.originHistory[idx] || "").trim();
+  const next = (nextNameRaw || "").trim();
+  if (!prev) return;
+  if (!next) {
+    setStatus("履歴名は空欄にできません。", true);
+    renderOriginInlineEditor();
+    return;
+  }
+  if (prev === next) return;
+  if (next === (state.defaultOrigin || "").trim()) {
+    state.originHistory = state.originHistory.filter((name, i) => i !== idx);
+  } else if (state.originHistory.some((name, i) => i !== idx && (name || "").trim() === next)) {
+    setStatus("同じ履歴名が既にあります。", true);
+    renderOriginInlineEditor();
+    return;
+  } else {
+    state.originHistory[idx] = next;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(state.originInlineChecks, prev)) {
+    state.originInlineChecks[next] = state.originInlineChecks[prev];
+    delete state.originInlineChecks[prev];
+  }
+  saveJson("ntt-origin-history", state.originHistory);
+  renderOriginHistory();
+  renderOriginInlineEditor();
+  setStatus("履歴名を更新しました。");
 }
 
 function setOriginInlineEditorOpen(isOpen) {
@@ -596,8 +644,16 @@ function moveOriginHistoryEntryToDefault(name) {
   saveDefaultOrigin(normalized);
   state.originHistory = nextHistory.slice(0, 10);
   saveJson("ntt-origin-history", state.originHistory);
+  if (els.originInput) {
+    els.originInput.value = normalized;
+  }
+  if (Number.isInteger(state.activeDayIndex) && state.activeDayIndex >= 0 && state.activeDayIndex < state.transportDays.length) {
+    state.transportDays[state.activeDayIndex].origin = normalized;
+  }
   renderOriginHistory();
   renderOriginInlineEditor();
+  renderRouteList();
+  renderTransportDetail();
 }
 
 function normalizeStoredHistories() {
@@ -2326,21 +2382,36 @@ els.originHistoryDropdown.addEventListener("click", (e) => {
   setStatus("出発地の履歴を適用しました。");
 });
 
-if (els.defaultOriginInput) {
-  els.defaultOriginInput.addEventListener("input", () => {
-    if (!state.originInlineEditMode || !els.saveDefaultOriginBtn) return;
-    const hasValue = Boolean(els.defaultOriginInput.value.trim());
-    els.saveDefaultOriginBtn.textContent = hasValue ? "SELECT" : "DEFAULT";
-  });
-}
-
 if (els.originInlineHistoryList) {
+  const commitOriginInlineNameEdit = (target) => {
+    const input = target.closest("input[data-origin-inline-source-index]");
+    if (!input) return;
+    renameOriginHistoryBySourceIndex(input.dataset.originInlineSourceIndex, input.value);
+  };
+
+  els.originInlineHistoryList.addEventListener("change", (e) => {
+    commitOriginInlineNameEdit(e.target);
+  });
+
+  els.originInlineHistoryList.addEventListener("blur", (e) => {
+    commitOriginInlineNameEdit(e.target);
+  }, true);
+
   els.originInlineHistoryList.addEventListener("change", (e) => {
     const checkbox = e.target.closest("input[data-origin-inline-check-name]");
     if (!checkbox) return;
     const name = decodeURIComponent(checkbox.dataset.originInlineCheckName || "");
     if (!name) return;
     state.originInlineChecks[name] = checkbox.checked;
+  });
+
+  els.originInlineHistoryList.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-set-default-origin]");
+    if (!btn) return;
+    const name = decodeURIComponent(btn.dataset.setDefaultOrigin || "");
+    if (!name) return;
+    moveOriginHistoryEntryToDefault(name);
+    setStatus("デフォルト出発地を更新しました。");
   });
 
   els.originInlineHistoryList.addEventListener("dragstart", (e) => {

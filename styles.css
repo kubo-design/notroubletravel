@@ -256,9 +256,9 @@ h3 {
 }
 
 .origin-inline-editor {
-  margin-top: 10px;
-  border-top: 2px solid #1e2f3d;
-  padding-top: 10px;
+  margin-top: 20px;
+  border-top: 1px solid #1e2f3d;
+  padding-top: 15px;
 }
 
 .origin-inline-list {
@@ -271,7 +271,7 @@ h3 {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  border-bottom: 1px dashed #95a6b8;
+  border-bottom: none;
   padding: 6px 0;
 }
 
@@ -289,12 +289,31 @@ h3 {
 }
 
 .origin-default-btn {
-  background: #fff;
+  background: #d7dbe1;
   color: #111;
-  border: 2px solid #111;
+  border: 2px solid #c3cad3;
   border-radius: 2px;
   min-height: 36px;
   padding: 6px 14px;
+  white-space: nowrap;
+}
+
+.origin-default-btn.is-default {
+  background: #111;
+  color: #fff;
+  border-color: #111;
+}
+
+.origin-default-btn.is-not-default {
+  background: #d7dbe1;
+  color: #fff;
+  border: none;
+}
+
+.origin-inline-name-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
 }
 
 .origin-inline-history-list .origin-inline-item {
@@ -716,7 +735,7 @@ td {
 
 .route-waypoint-item {
   display: block;
-  padding: 26px 8px 8px;
+  padding: 16px 8px 0;
 }
 
 .route-waypoint-item.is-empty-waypoint {
@@ -1069,6 +1088,9 @@ td {
     display: flex;
     flex-wrap: nowrap;
     align-items: center;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     gap: 8px;
     overflow-x: auto;
     padding-bottom: 2px;
@@ -1079,8 +1101,9 @@ td {
   }
 
   .goal-action-row input {
-    flex: 1 1 180px;
-    min-width: 160px;
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
   }
 
   .hotel-choice-row {
@@ -1097,12 +1120,16 @@ td {
     gap: 8px;
   }
 
-  .origin-inline-item {
-    grid-template-columns: auto minmax(0, 1fr);
+  .origin-inline-item,
+  .origin-inline-default-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
   }
 
-  .origin-default-btn {
-    grid-column: 1 / -1;
+  .origin-inline-item .origin-default-btn,
+  .origin-inline-default-row .origin-default-btn {
+    grid-column: auto;
+    white-space: nowrap;
   }
 
   .route-day {
