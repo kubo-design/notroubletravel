@@ -139,13 +139,31 @@ h3 {
 }
 
 .day-card-head {
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title actions"
+    "title maps";
+  align-items: center;
+  row-gap: 8px;
+}
+
+.day-card-head .day-title {
+  grid-area: title;
 }
 
 .day-card-head .day-actions {
-  margin-left: auto;
+  grid-area: actions;
+  margin-left: 0;
   width: auto;
   flex-wrap: nowrap;
+}
+
+.day-card-head .day-route-actions {
+  grid-area: maps;
+  width: auto;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .origin-head-row {
@@ -616,7 +634,7 @@ td {
 }
 
 .route-segment-time-select {
-  min-width: 120px;
+  min-width: 96px;
 }
 
 .route-day {
@@ -947,6 +965,9 @@ td {
   .day-card-head {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "title actions"
+      "title maps";
     align-items: center;
     gap: 8px;
   }
@@ -956,12 +977,12 @@ td {
   }
 
   .day-card-head .day-route-actions {
-    grid-column: 1 / -1;
-    width: 100%;
-    justify-content: flex-start;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    padding-bottom: 2px;
+    grid-area: maps;
+    width: auto;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    overflow-x: visible;
+    padding-bottom: 0;
   }
 
   .day-card-head .day-actions {
@@ -1072,7 +1093,28 @@ td {
     justify-content: flex-start;
     flex-wrap: nowrap;
     overflow-x: auto;
+    gap: 4px;
     padding-bottom: 2px;
+  }
+
+  .route-segment-only .tiny {
+    min-height: 30px;
+    padding: 4px 6px;
+    font-size: 0.74rem;
+    white-space: nowrap;
+  }
+
+  .route-segment-time {
+    font-size: 0.74rem;
+    white-space: nowrap;
+  }
+
+  .route-segment-time-select {
+    min-width: 72px;
+    max-width: 80px;
+    min-height: 30px;
+    padding: 4px 6px;
+    font-size: 0.74rem;
   }
 
   .scroll {
@@ -1126,5 +1168,12 @@ td {
     justify-content: flex-start;
     gap: 8px;
     flex-wrap: wrap;
+  }
+
+  /* iOS Safari: input focus zoom prevention */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 }

@@ -175,7 +175,7 @@ function setSegmentManualTime(dayIndex, segmentIndex, value) {
 
 function buildSegmentTimeOptions(selectedValue = "") {
   const selected = String(selectedValue || "");
-  let html = `<option value="" ${selected === "" ? "selected" : ""}>時間選択</option>`;
+  let html = `<option value="" ${selected === "" ? "selected" : ""}>時間</option>`;
   for (let minute = 5; minute <= 720; minute += 5) {
     const hour = Math.floor(minute / 60);
     const min = minute % 60;
@@ -300,12 +300,10 @@ function isMobileDevice() {
 
 function openGoogleMap(url) {
   if (!url) return;
-  if (isMobileDevice()) {
-    // On smartphones, this URL often hands off to the Google Maps app.
-    window.location.href = url;
-    return;
-  }
-  window.open(url, "_blank", "noopener,noreferrer");
+  const popup = window.open(url, "_blank", "noopener,noreferrer");
+  if (popup) return;
+  // Fallback when popup is blocked or in some in-app browsers.
+  window.location.href = url;
 }
 
 function openYahooCarNaviRoute(from, to) {
@@ -313,11 +311,9 @@ function openYahooCarNaviRoute(from, to) {
   const toName = (to || "").trim();
   if (!fromName || !toName) return;
   const routeUrl = `https://map.yahoo.co.jp/route/car?from=${encodeURIComponent(fromName)}&to=${encodeURIComponent(toName)}`;
-  if (isMobileDevice()) {
-    window.location.href = routeUrl;
-    return;
-  }
-  window.open(routeUrl, "_blank", "noopener,noreferrer");
+  const popup = window.open(routeUrl, "_blank", "noopener,noreferrer");
+  if (popup) return;
+  window.location.href = routeUrl;
 }
 
 function extractLatLng(text) {
@@ -349,11 +345,11 @@ function haversineKm(a, b) {
 function getDriveTimeLabel(fromName, toName) {
   const from = extractLatLng(fromName);
   const to = extractLatLng(toName);
-  if (!from || !to) return "予測時間";
+  if (!from || !to) return "予測";
   const km = haversineKm(from, to);
   const roadKm = km * 1.25;
   const minutes = Math.max(1, Math.round((roadKm / 40) * 60));
-  return `予測時間: 約${minutes}分`;
+  return `予測 ${minutes}分`;
 }
 
 function saveOriginHistory(origin) {
@@ -1335,7 +1331,7 @@ function ensureDayCardAccordionStructure() {
       const exportBtn = document.createElement("button");
       exportBtn.type = "button";
       exportBtn.className = "ghost tiny day-export-btn icon-btn";
-      exportBtn.textContent = "⇪";
+      exportBtn.textContent = "↑";
       exportBtn.setAttribute("aria-label", "書き出し");
       exportBtn.setAttribute("title", "書き出し");
       tools.appendChild(exportBtn);
@@ -1344,7 +1340,7 @@ function ensureDayCardAccordionStructure() {
       const importBtn = document.createElement("button");
       importBtn.type = "button";
       importBtn.className = "ghost tiny day-import-btn icon-btn";
-      importBtn.textContent = "⇩";
+      importBtn.textContent = "↓";
       importBtn.setAttribute("aria-label", "読み込み");
       importBtn.setAttribute("title", "読み込み");
       tools.appendChild(importBtn);
@@ -1701,8 +1697,6 @@ function buildRouteListHtmlForDay(dayIndex) {
           <button type="button" class="ghost tiny route-toggle-btn" data-toggle-point="${key}" aria-label="経由地開閉">${point.expanded ? "▼" : "▶"}</button>
           <input type="text" class="route-point-input" data-point-input="${dayIndex}:${sourceIndex}" value="${point.name}" placeholder="経由地を入力" />
           <button type="button" class="tiny route-btn-black" data-remove-point="${dayIndex}:${sourceIndex}">削除</button>
-          <button type="button" class="ghost tiny route-head-icon" data-move-up="${dayIndex}:${sourceIndex}">↑</button>
-          <button type="button" class="ghost tiny route-head-icon" data-move-down="${dayIndex}:${sourceIndex}">↓</button>
           <span class="drag-handle">⠿</span>
         </div>
         <div class="route-waypoint-body ${point.expanded ? "" : "hidden"}">
@@ -1729,6 +1723,8 @@ function buildRouteListHtmlForDay(dayIndex) {
           <div class="route-actions route-waypoint-move-row">
             <select class="tiny" data-move-day-select="${dayIndex}:${sourceIndex}">${moveDayOptions}</select>
             <button type="button" class="tiny route-btn-black" data-move-to-day="${dayIndex}:${sourceIndex}">別日に移動</button>
+            <button type="button" class="ghost tiny route-head-icon" data-move-up="${dayIndex}:${sourceIndex}">↑</button>
+            <button type="button" class="ghost tiny route-head-icon" data-move-down="${dayIndex}:${sourceIndex}">↓</button>
           </div>
           <div class="route-candidates">
             ${
