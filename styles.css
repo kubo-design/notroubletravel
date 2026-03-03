@@ -1,0 +1,1068 @@
+:root {
+  --bg-a: #f8fbff;
+  --bg-b: #ecf7ef;
+  --ink: #132534;
+  --line: #d7e2eb;
+  --card: rgba(255, 255, 255, 0.9);
+  --accent: #0d7ca9;
+  --accent-2: #0f8a5f;
+  --warn: #9f3f2f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Noto Sans JP", sans-serif;
+  color: var(--ink);
+  background: radial-gradient(circle at 15% 15%, #fff8dd, transparent 35%),
+    linear-gradient(145deg, var(--bg-a), var(--bg-b));
+  min-height: 100vh;
+  padding: 20px;
+  -webkit-text-size-adjust: 100%;
+}
+
+.glow {
+  position: fixed;
+  inset: -15%;
+  background: conic-gradient(
+    from 210deg,
+    rgba(13, 124, 169, 0.1),
+    rgba(15, 138, 95, 0.1),
+    rgba(249, 176, 71, 0.08),
+    rgba(13, 124, 169, 0.1)
+  );
+  filter: blur(72px);
+  z-index: -1;
+  animation: sway 18s ease-in-out infinite alternate;
+}
+
+@keyframes sway {
+  from {
+    transform: translate(-2%, -1%) rotate(0deg);
+  }
+  to {
+    transform: translate(2%, 2%) rotate(7deg);
+  }
+}
+
+.wrap {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.brand {
+  margin: 0;
+  font-family: "Lexend", sans-serif;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: clamp(1.6rem, 3vw, 2.3rem);
+  line-height: 1.2;
+}
+
+.hero p {
+  margin: 12px 0 0;
+}
+
+.day-io-all {
+  display: flex;
+  gap: 8px;
+  flex-wrap: nowrap;
+  margin-top: 0;
+}
+
+.stack {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card);
+  box-shadow: 0 8px 22px rgba(19, 37, 52, 0.08);
+  padding: 16px;
+}
+
+h2,
+h3 {
+  margin-top: 0;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.section-head h3 {
+  margin: 0;
+}
+
+.day-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.day-title h2 {
+  margin: 0;
+}
+
+.day-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.day-route-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.day-card-head {
+  flex-wrap: nowrap;
+}
+
+.day-card-head .day-actions {
+  margin-left: auto;
+  width: auto;
+  flex-wrap: nowrap;
+}
+
+.origin-head-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.origin-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.origin-title h3 {
+  margin: 0;
+}
+
+.goal-head-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.goal-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.goal-title h3 {
+  margin: 0;
+}
+
+.goal-action-row {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: auto auto minmax(140px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.goal-action-row .origin-edit-btn {
+  min-width: 56px;
+}
+
+.goal-register-btn {
+  background: #111;
+  color: #fff;
+}
+
+.origin-action-row {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.origin-edit-btn {
+  background: #4f7ea8;
+  color: #fff;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.origin-edit-btn.origin-edit-active {
+  background: #111;
+  color: #fff;
+}
+
+.origin-current-btn {
+  background: #ee8f21;
+  color: #fff;
+}
+
+.origin-inline-editor {
+  margin-top: 10px;
+  border-top: 2px solid #1e2f3d;
+  padding-top: 10px;
+}
+
+.origin-inline-list {
+  display: grid;
+  gap: 8px;
+}
+
+.origin-inline-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px dashed #95a6b8;
+  padding: 6px 0;
+}
+
+.origin-inline-check-wrap {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+}
+
+.origin-inline-check-wrap input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  margin: 0;
+}
+
+.origin-default-btn {
+  background: #fff;
+  color: #111;
+  border: 2px solid #111;
+  border-radius: 2px;
+  min-height: 36px;
+  padding: 6px 14px;
+}
+
+.origin-inline-history-list .origin-inline-item {
+  cursor: grab;
+}
+
+.origin-inline-name {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.origin-inline-divider {
+  margin-top: 6px;
+}
+
+.origin-inline-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.origin-inline-actions button {
+  border-radius: 0;
+  border: 2px solid #111;
+  min-height: 38px;
+}
+
+.origin-inline-actions #origin-inline-select-all {
+  background: #fff;
+  color: #111;
+}
+
+.origin-inline-actions #origin-inline-delete-selected {
+  background: #111;
+  color: #fff;
+}
+
+.icon-btn {
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  min-height: 42px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.grid {
+  display: grid;
+  gap: 10px;
+}
+
+.form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: end;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.95rem;
+}
+
+input,
+select,
+button {
+  font: inherit;
+}
+
+input,
+select {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: #fff;
+  min-height: 44px;
+}
+
+button {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+button:hover {
+  filter: brightness(0.95);
+}
+
+button.ghost {
+  background: #fff;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.split {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.hotel-select-head {
+  margin: 10px 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hotel-select-head h4 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.hotel-choice-list {
+  display: grid;
+  gap: 8px;
+}
+
+.hotel-empty {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 12px;
+  color: #506274;
+}
+
+.hotel-choice-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 8px;
+}
+
+.hotel-choice-row {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.hotel-toggle-btn {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+}
+
+.hotel-name-input {
+  min-height: 40px;
+}
+
+.hotel-select-btn {
+  min-width: 72px;
+}
+
+.hotel-select-btn.is-selected {
+  background: #111;
+  color: #fff;
+}
+
+.hotel-select-btn.is-unselected {
+  background: #bfc4cc;
+  color: #fff;
+}
+
+.hotel-choice-detail {
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.hotel-detail-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.hotel-detail-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hotel-name-candidates {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hotel-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  border: none;
+  border-radius: 0;
+  min-height: 38px;
+  padding: 8px 12px;
+  background: #111;
+  color: #fff;
+  font-weight: 700;
+}
+
+.scroll {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.93rem;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  padding: 8px;
+  vertical-align: top;
+}
+
+.box {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+  min-height: 54px;
+}
+
+.route-list-plain {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  min-height: 0;
+}
+
+.muted {
+  color: #506274;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.8rem;
+  border-radius: 99px;
+  padding: 3px 8px;
+  background: #e8f4fa;
+  color: var(--accent);
+  margin-left: 8px;
+}
+
+.warning {
+  color: var(--warn);
+}
+
+.hidden {
+  display: none !important;
+}
+
+.inline-map-wrap {
+  margin-top: 8px;
+}
+
+.inline-map-frame {
+  width: 100%;
+  min-height: 240px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.status {
+  margin-top: 12px;
+  font-size: 0.92rem;
+}
+
+.tiny {
+  padding: 7px 10px;
+  font-size: 0.85rem;
+  min-height: 36px;
+}
+
+.route-steps {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.route-steps li {
+  margin-bottom: 4px;
+}
+
+.route-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.route-origin,
+.route-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  background: #fff;
+}
+
+.route-segment-only {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 2px 0;
+}
+
+.route-segment-time {
+  font-size: 0.86rem;
+  color: #4f6275;
+  font-weight: 700;
+}
+
+.route-segment-time-select {
+  min-width: 120px;
+}
+
+.route-day {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px;
+  background: #fff;
+}
+
+.route-day-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.route-day-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.route-item {
+  display: grid;
+  grid-template-columns: auto auto minmax(120px, 1fr) minmax(180px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.route-waypoint-item {
+  display: block;
+  padding: 8px;
+}
+
+.route-waypoint-item.is-empty-waypoint {
+  background: #eef2f6;
+}
+
+.route-waypoint-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+.route-waypoint-head .route-point-input {
+  flex: 1 1 auto;
+  min-width: 140px;
+}
+
+.route-toggle-btn,
+.route-head-icon {
+  min-width: 40px;
+}
+
+.route-waypoint-body {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.route-waypoint-history-tools {
+  display: grid;
+  grid-template-columns: auto auto minmax(120px, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.route-waypoint-actions,
+.route-waypoint-move-row {
+  justify-content: flex-start;
+}
+
+.route-btn-black {
+  background: #111;
+  color: #fff;
+  border-radius: 0;
+}
+
+.drag-handle {
+  font-weight: 700;
+  color: #6f8090;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.route-label {
+  font-size: 0.82rem;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.route-name {
+  font-size: 0.95rem;
+}
+
+.route-point-input,
+.route-url-input {
+  width: 100%;
+}
+
+.input-tools {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.route-history-tools {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.route-history-dropdown {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.route-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.route-item.dragging {
+  opacity: 0.5;
+}
+
+.route-candidates {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.segment-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.segment-row {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.history-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 18, 28, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 50;
+}
+
+.history-modal.hidden {
+  display: none;
+}
+
+.history-modal-panel {
+  width: min(560px, 100%);
+  max-height: 80vh;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.history-modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-modal-head h3 {
+  margin: 0;
+}
+
+.history-modal-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.history-editor-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+@media (max-width: 900px) {
+  body {
+    padding: 14px;
+  }
+
+  .split {
+    grid-template-columns: 1fr;
+  }
+
+  .section-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .day-card-head {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .day-card-head .input-tools {
+    width: auto;
+  }
+
+  .day-card-head .input-tools button {
+    flex: 0 0 auto;
+  }
+
+  .day-route-actions {
+    width: auto;
+  }
+
+  .route-item {
+    grid-template-columns: auto 1fr;
+  }
+
+  .route-waypoint-item {
+    display: block;
+  }
+
+  .route-waypoint-head {
+    flex-wrap: nowrap;
+  }
+
+  .route-waypoint-history-tools {
+    grid-template-columns: auto auto minmax(90px, 1fr);
+  }
+
+  .route-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .route-point-input,
+  .route-url-input {
+    grid-column: 1 / -1;
+  }
+
+  .route-history-tools {
+    grid-column: 1 / -1;
+  }
+
+  .segment-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .input-tools {
+    width: 100%;
+  }
+
+  .input-tools button {
+    flex: 1;
+  }
+
+  table {
+    font-size: 0.9rem;
+  }
+}
+
+@media (max-width: 640px) {
+  body {
+    padding: 10px;
+  }
+
+  .card {
+    padding: 12px;
+    border-radius: 12px;
+  }
+
+  .hero {
+    align-items: center;
+  }
+
+  .day-io-all button {
+    flex: 0 0 auto;
+  }
+
+  h2 {
+    font-size: 1.35rem;
+  }
+
+  h3 {
+    font-size: 1.05rem;
+  }
+
+  .origin-head-row {
+    grid-template-columns: auto minmax(140px, 1fr);
+    gap: 8px;
+  }
+
+  .goal-head-row {
+    grid-template-columns: auto minmax(140px, 1fr);
+    gap: 8px;
+  }
+
+  .goal-action-row {
+    grid-template-columns: auto auto minmax(120px, 1fr) auto;
+    gap: 8px;
+  }
+
+  .goal-action-row input {
+    grid-column: auto;
+    min-width: 0;
+  }
+
+  .hotel-choice-row {
+    grid-template-columns: auto minmax(90px, 1fr) auto auto;
+  }
+
+  .hotel-detail-summary {
+    gap: 8px;
+    font-size: 0.92rem;
+  }
+
+  .origin-action-row {
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+  }
+
+  .origin-inline-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .origin-default-btn {
+    grid-column: 1 / -1;
+  }
+
+  .route-day {
+    padding: 6px;
+  }
+
+  .route-item {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .route-waypoint-item {
+    display: block;
+  }
+
+  .route-waypoint-head {
+    flex-wrap: nowrap;
+  }
+
+  .route-waypoint-history-tools {
+    grid-template-columns: 1fr 72px;
+  }
+
+  .route-waypoint-history-tools .route-url-input {
+    grid-column: 1 / -1;
+  }
+
+  .route-actions {
+    justify-content: flex-start;
+  }
+
+  .scroll {
+    overflow: visible;
+  }
+
+  .scroll table,
+  .scroll thead,
+  .scroll tbody,
+  .scroll tr,
+  .scroll th,
+  .scroll td {
+    display: block;
+    width: 100%;
+  }
+
+  .scroll thead {
+    display: none;
+  }
+
+  .scroll tr {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+    margin-bottom: 10px;
+    padding: 8px;
+  }
+
+  .scroll td {
+    border: 0;
+    padding: 6px 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .scroll td::before {
+    content: attr(data-label);
+    font-weight: 700;
+    color: #4c6173;
+    flex: 0 0 auto;
+  }
+
+  .scroll td[data-label="宿名"] input {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .scroll td[data-label="操作"] {
+    justify-content: flex-start;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+}
