@@ -306,9 +306,13 @@ function isMobileDevice() {
 
 function openGoogleMap(url) {
   if (!url) return;
+  if (isMobileDevice()) {
+    // Mobile: avoid popup blockers/extra dialogs from window.open.
+    window.location.href = url;
+    return;
+  }
   const popup = window.open(url, "_blank", "noopener,noreferrer");
   if (popup) return;
-  // Fallback when popup is blocked or in some in-app browsers.
   window.location.href = url;
 }
 
@@ -317,6 +321,10 @@ function openYahooCarNaviRoute(from, to) {
   const toName = (to || "").trim();
   if (!fromName || !toName) return;
   const routeUrl = `https://map.yahoo.co.jp/route/car?from=${encodeURIComponent(fromName)}&to=${encodeURIComponent(toName)}`;
+  if (isMobileDevice()) {
+    window.location.href = routeUrl;
+    return;
+  }
   const popup = window.open(routeUrl, "_blank", "noopener,noreferrer");
   if (popup) return;
   window.location.href = routeUrl;
