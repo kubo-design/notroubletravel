@@ -57,9 +57,15 @@
             <div class="origin-action-row">
               <button type="button" id="origin-history-btn" data-day-role="origin-history-btn">履歴から</button>
               <button type="button" id="origin-history-edit-btn" data-day-role="origin-history-edit-btn" class="origin-edit-btn" aria-label="履歴編集">☰</button>
+              <button type="button" id="origin-url-suggest-btn" class="ghost">MAPから</button>
               <button type="button" id="use-current-location" class="origin-current-btn">現在地から</button>
             </div>
+            <div id="origin-map-url-wrap" class="goal-action-row hidden">
+              <input type="url" id="origin-map-url-input" placeholder="GoogleMap URLを貼り付け" />
+              <button type="button" id="origin-map-url-apply" class="goal-register-btn">候補表示</button>
+            </div>
             <div id="origin-history-dropdown" data-day-role="origin-history-dropdown" class="route-history-dropdown hidden"></div>
+            <div id="origin-url-candidates" class="route-candidates hidden"></div>
             <div id="origin-inline-editor" class="origin-inline-editor hidden">
               <div id="origin-inline-list" class="origin-inline-list">
                 <div class="origin-inline-item origin-inline-default-row" data-origin-index="0" draggable="true">
@@ -97,10 +103,16 @@
             <form id="hotel-register-form" class="goal-action-row">
               <button type="button" id="destination-history-btn" data-day-role="destination-history-btn">履歴から</button>
               <button type="button" id="destination-history-edit-btn" data-day-role="destination-history-edit-btn" class="origin-edit-btn" aria-label="履歴編集">☰</button>
+              <button type="button" id="destination-url-suggest-btn" class="ghost">MAPから</button>
               <input type="url" id="hotelUrl" data-day-role="hotel-url-input" placeholder="宿泊地 URL" required />
               <button type="submit" class="goal-register-btn">登録</button>
             </form>
+            <div id="destination-map-url-wrap" class="goal-action-row hidden">
+              <input type="url" id="destination-map-url-input" placeholder="GoogleMap URLを貼り付け" />
+              <button type="button" id="destination-map-url-apply" class="goal-register-btn">候補表示</button>
+            </div>
             <div id="destination-history-dropdown" data-day-role="destination-history-dropdown" class="route-history-dropdown hidden"></div>
+            <div id="destination-url-candidates" class="route-candidates hidden"></div>
 
             <div class="hotel-select-head">
               <h4>宿泊地選択</h4>

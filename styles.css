@@ -234,7 +234,7 @@ h3 {
 .origin-action-row {
   margin-top: 8px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -790,6 +790,19 @@ td {
   border-radius: 0;
 }
 
+.route-btn-green {
+  background: #2e9d57;
+  color: #fff;
+  border-radius: 0;
+}
+
+.route-btn-green-active {
+  background: #fff;
+  color: #2e9d57;
+  border: 1px solid #2e9d57;
+  border-radius: 0;
+}
+
 .drag-handle {
   font-weight: 700;
   color: #6f8090;
@@ -1123,8 +1136,19 @@ td {
   }
 
   .origin-action-row {
-    grid-template-columns: 1fr 1fr 1fr;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .origin-action-row > * {
+    flex: 0 0 auto;
   }
 
   .origin-inline-item,

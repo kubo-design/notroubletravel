@@ -20,6 +20,8 @@ const state = {
   draggedDayIndex: null,
   spots: [],
   history: loadJson("ntt-history", []),
+  originUrlCandidates: [],
+  destinationUrlCandidates: [],
 };
 
 Object.defineProperty(state, "transportPlan", {
@@ -61,9 +63,19 @@ const els = {
   destinationHistoryBtn: document.getElementById("destination-history-btn"),
   destinationHistoryEditBtn: document.getElementById("destination-history-edit-btn"),
   destinationHistoryDropdown: document.getElementById("destination-history-dropdown"),
+  destinationUrlSuggestBtn: document.getElementById("destination-url-suggest-btn"),
+  destinationUrlCandidates: document.getElementById("destination-url-candidates"),
+  destinationMapUrlWrap: document.getElementById("destination-map-url-wrap"),
+  destinationMapUrlInput: document.getElementById("destination-map-url-input"),
+  destinationMapUrlApply: document.getElementById("destination-map-url-apply"),
   originHistoryBtn: document.getElementById("origin-history-btn"),
   originHistoryEditBtn: document.getElementById("origin-history-edit-btn"),
   originHistoryDropdown: document.getElementById("origin-history-dropdown"),
+  originUrlSuggestBtn: document.getElementById("origin-url-suggest-btn"),
+  originUrlCandidates: document.getElementById("origin-url-candidates"),
+  originMapUrlWrap: document.getElementById("origin-map-url-wrap"),
+  originMapUrlInput: document.getElementById("origin-map-url-input"),
+  originMapUrlApply: document.getElementById("origin-map-url-apply"),
   originHistory: document.getElementById("origin-history"),
   originInlineEditor: document.getElementById("origin-inline-editor"),
   originInlineHistoryList: document.getElementById("origin-inline-history-list"),
@@ -330,6 +342,13 @@ function openYahooCarNaviRoute(from, to) {
   window.location.href = routeUrl;
 }
 
+function openMapPicker(url = "https://www.google.com/maps") {
+  const popup = window.open(url, "_blank", "noopener,noreferrer");
+  if (popup) return true;
+  setStatus("地図を新しいタブで開けませんでした。ブラウザ設定を確認してください。", true);
+  return false;
+}
+
 function extractLatLng(text) {
   const value = String(text || "");
   const currentMatch = value.match(/現在地\(\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\)/);
@@ -509,6 +528,77 @@ function closeHistoryEditor() {
 function renderOriginHistory() {
   if (!els.originHistory) return;
   els.originHistory.innerHTML = state.originHistory.map((o) => `<option value="${o}"></option>`).join("");
+}
+
+function renderOriginUrlCandidates() {
+  if (!els.originUrlCandidates) return;
+  const list = Array.isArray(state.originUrlCandidates) ? state.originUrlCandidates : [];
+  if (!list.length) {
+    els.originUrlCandidates.classList.add("hidden");
+    els.originUrlCandidates.innerHTML = "";
+    return;
+  }
+  els.originUrlCandidates.classList.remove("hidden");
+  els.originUrlCandidates.innerHTML = list
+    .map(
+      (candidate) =>
+        `<button type="button" class="ghost tiny" data-apply-origin-url-candidate="${encodeURIComponent(candidate)}">${escapeHtml(candidate)}</button>`,
+    )
+    .join("");
+}
+
+function renderDestinationUrlCandidates() {
+  if (!els.destinationUrlCandidates) return;
+  const list = Array.isArray(state.destinationUrlCandidates) ? state.destinationUrlCandidates : [];
+  if (!list.length) {
+    els.destinationUrlCandidates.classList.add("hidden");
+    els.destinationUrlCandidates.innerHTML = "";
+    return;
+  }
+  els.destinationUrlCandidates.classList.remove("hidden");
+  els.destinationUrlCandidates.innerHTML = list
+    .map(
+      (candidate) =>
+        `<button type="button" class="ghost tiny" data-apply-destination-url-candidate="${encodeURIComponent(candidate)}">${escapeHtml(candidate)}</button>`,
+    )
+    .join("");
+}
+
+function suggestCandidatesFromPastedUrl(target, sourceUrl = "") {
+  const url = (sourceUrl || "").trim();
+  if (!url) return;
+  const candidates = extractNameCandidatesFromUrl(url);
+  if (!candidates.length) {
+    setStatus("URLから候補を抽出できませんでした。", true);
+    return;
+  }
+  if (target === "origin") {
+    state.originUrlCandidates = candidates;
+    renderOriginUrlCandidates();
+  } else {
+    state.destinationUrlCandidates = candidates;
+    renderDestinationUrlCandidates();
+  }
+  setStatus("URLから名称候補を取得しました。候補ボタンで反映できます。");
+}
+
+function openMapAndShowUrlInput(target) {
+  if (target === "origin") {
+    if (els.originMapUrlWrap) {
+      els.originMapUrlWrap.classList.remove("hidden");
+    }
+    if (els.originMapUrlInput) {
+      window.setTimeout(() => els.originMapUrlInput.focus(), 0);
+    }
+  } else if (target === "destination") {
+    if (els.destinationMapUrlWrap) {
+      els.destinationMapUrlWrap.classList.remove("hidden");
+    }
+    if (els.destinationMapUrlInput) {
+      window.setTimeout(() => els.destinationMapUrlInput.focus(), 0);
+    }
+  }
+  openMapPicker("https://www.google.com/maps");
 }
 
 function setOriginInlineEditMode(enabled) {
@@ -1236,6 +1326,40 @@ function normalizeCandidate(text) {
     .trim();
 }
 
+function extractNameCandidatesFromUrl(rawUrl) {
+  const value = String(rawUrl || "").trim();
+  if (!value) return [];
+
+  let urlObj;
+  try {
+    urlObj = new URL(value);
+  } catch {
+    return [];
+  }
+
+  const chunks = [];
+  const params = urlObj.searchParams;
+  ["q", "query", "destination", "origin", "place", "name", "text", "daddr", "saddr"].forEach((key) => {
+    const paramValue = params.get(key);
+    if (paramValue) chunks.push(paramValue);
+  });
+
+  urlObj.pathname
+    .split("/")
+    .map((part) => decodeURIComponent(part || ""))
+    .filter(Boolean)
+    .forEach((part) => chunks.push(part));
+
+  const prepared = chunks
+    .flatMap((chunk) => String(chunk).split(/[|,/]/))
+    .map((item) => normalizeCandidate(item))
+    .map((item) => item.replace(/^\+?\d+(?:\.\d+)?\s*,\s*\+?\d+(?:\.\d+)?$/, ""))
+    .map((item) => item.replace(/\b(map|maps|place|search|dir|route|api)\b/gi, "").trim())
+    .filter((item) => item.length >= 2);
+
+  return [...new Set(prepared)].slice(0, 8);
+}
+
 async function fetchGoogleSuggestions(query) {
   // Use JSONP instead of fetch to avoid browser CORS restrictions.
   return new Promise((resolve, reject) => {
@@ -1801,15 +1925,9 @@ function buildRouteListHtmlForDay(dayIndex) {
             }
           </div>
           <div class="route-actions route-waypoint-actions">
-            <button type="button" class="tiny route-btn-black" data-google-suggest="${dayIndex}:${sourceIndex}">名称候補検索</button>
-            <button type="button" class="tiny route-btn-black" data-close-candidates="${dayIndex}:${sourceIndex}">候補を閉じる</button>
+            <button type="button" class="tiny route-btn-black" data-url-suggest="${dayIndex}:${sourceIndex}">MAPから</button>
+            <button type="button" class="tiny ${point.candidates.length ? "route-btn-green-active" : "route-btn-green"}" data-google-suggest="${dayIndex}:${sourceIndex}">${point.candidates.length ? "閉じる" : "名称候補"}</button>
             <button type="button" class="tiny route-btn-black" data-google-search="${dayIndex}:${sourceIndex}">Google検索</button>
-          </div>
-          <div class="route-actions route-waypoint-move-row">
-            <select class="tiny" data-move-day-select="${dayIndex}:${sourceIndex}">${moveDayOptions}</select>
-            <button type="button" class="tiny route-btn-black" data-move-to-day="${dayIndex}:${sourceIndex}">別日に移動</button>
-            <button type="button" class="ghost tiny route-head-icon" data-move-up="${dayIndex}:${sourceIndex}">↑</button>
-            <button type="button" class="ghost tiny route-head-icon" data-move-down="${dayIndex}:${sourceIndex}">↓</button>
           </div>
           <div class="route-candidates">
             ${
@@ -1819,6 +1937,12 @@ function buildRouteListHtmlForDay(dayIndex) {
                     .join("")
                 : ""
             }
+          </div>
+          <div class="route-actions route-waypoint-move-row">
+            <select class="tiny" data-move-day-select="${dayIndex}:${sourceIndex}">${moveDayOptions}</select>
+            <button type="button" class="tiny route-btn-black" data-move-to-day="${dayIndex}:${sourceIndex}">別日に移動</button>
+            <button type="button" class="ghost tiny route-head-icon" data-move-up="${dayIndex}:${sourceIndex}">↑</button>
+            <button type="button" class="ghost tiny route-head-icon" data-move-down="${dayIndex}:${sourceIndex}">↓</button>
           </div>
         </div>
       </li>
@@ -2560,6 +2684,73 @@ if (els.destinationHistoryDropdown) {
   });
 }
 
+if (els.originUrlSuggestBtn) {
+  els.originUrlSuggestBtn.addEventListener("click", () => {
+    openMapAndShowUrlInput("origin");
+  });
+}
+
+if (els.destinationUrlSuggestBtn) {
+  els.destinationUrlSuggestBtn.addEventListener("click", () => {
+    openMapAndShowUrlInput("destination");
+  });
+}
+
+if (els.originMapUrlApply) {
+  els.originMapUrlApply.addEventListener("click", () => {
+    const sourceUrl = (els.originMapUrlInput && els.originMapUrlInput.value) || "";
+    if (!sourceUrl.trim()) {
+      setStatus("START用のGoogleMap URLを入力してください。", true);
+      return;
+    }
+    suggestCandidatesFromPastedUrl("origin", sourceUrl);
+  });
+}
+
+if (els.destinationMapUrlApply) {
+  els.destinationMapUrlApply.addEventListener("click", () => {
+    const sourceUrl = (els.destinationMapUrlInput && els.destinationMapUrlInput.value) || "";
+    if (!sourceUrl.trim()) {
+      setStatus("GOAL用のGoogleMap URLを入力してください。", true);
+      return;
+    }
+    suggestCandidatesFromPastedUrl("destination", sourceUrl);
+  });
+}
+
+if (els.originUrlCandidates) {
+  els.originUrlCandidates.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-apply-origin-url-candidate]");
+    if (!btn) return;
+    const name = decodeURIComponent(btn.dataset.applyOriginUrlCandidate || "");
+    if (!name) return;
+    if (els.originInput) {
+      els.originInput.value = name;
+      updateOriginByInputElement(els.originInput);
+      saveOriginHistory(name);
+    }
+    state.originUrlCandidates = [];
+    renderOriginUrlCandidates();
+    setStatus(`STARTを「${name}」に設定しました。`);
+  });
+}
+
+if (els.destinationUrlCandidates) {
+  els.destinationUrlCandidates.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-apply-destination-url-candidate]");
+    if (!btn) return;
+    const name = decodeURIComponent(btn.dataset.applyDestinationUrlCandidate || "");
+    if (!name) return;
+    if (els.destinationInput) {
+      els.destinationInput.value = name;
+    }
+    syncDestinationFromInput(name);
+    state.destinationUrlCandidates = [];
+    renderDestinationUrlCandidates();
+    setStatus(`GOALを「${name}」に設定しました。`);
+  });
+}
+
 document.addEventListener("click", (e) => {
   const originHistoryBtn = e.target.closest("button[data-day-role='origin-history-btn']");
   if (originHistoryBtn && !originHistoryBtn.id) {
@@ -2872,6 +3063,13 @@ els.routeList.addEventListener("click", (e) => {
     const { dayIndex, pointIndex } = parseDayAndIndex(suggestBtn.dataset.googleSuggest);
     setActiveDay(dayIndex);
     const current = ensurePointObject(state.transportPlan.points[pointIndex]);
+    if (Array.isArray(current.candidates) && current.candidates.length) {
+      state.transportPlan.points[pointIndex] = { ...current, candidates: [] };
+      renderRouteList();
+      renderTransportDetail();
+      setStatus("名称候補を閉じました。");
+      return;
+    }
     const query = current.name.trim();
     if (!query) {
       setStatus("Google検索候補を取るには、先に地名や施設名を入力してください。", true);
@@ -2894,6 +3092,33 @@ els.routeList.addEventListener("click", (e) => {
       .catch(() => {
         setStatus("Google検索候補の取得に失敗しました。時間を置いて再試行してください。", true);
       });
+    return;
+  }
+
+  const urlSuggestBtn = e.target.closest("button[data-url-suggest]");
+  if (urlSuggestBtn) {
+    const { dayIndex, pointIndex } = parseDayAndIndex(urlSuggestBtn.dataset.urlSuggest);
+    setActiveDay(dayIndex);
+    const current = ensurePointObject(state.transportPlan.points[pointIndex]);
+    const sourceUrl = (current.url || "").trim();
+    const urlInput = els.routeList.querySelector(`input[data-point-url="${dayIndex}:${pointIndex}"]`);
+    if (urlInput) {
+      urlInput.focus();
+    }
+    openMapPicker("https://www.google.com/maps");
+    if (!sourceUrl) {
+      setStatus("GoogleMapのURLをこの経由地のURL欄に貼り付けて、もう一度「MAPから」を押してください。", true);
+      return;
+    }
+    const candidates = extractNameCandidatesFromUrl(sourceUrl);
+    if (!candidates.length) {
+      setStatus("URLから候補を抽出できませんでした。", true);
+      return;
+    }
+    state.transportPlan.points[pointIndex] = { ...current, url: sourceUrl, candidates };
+    renderRouteList();
+    renderTransportDetail();
+    setStatus("URLから名称候補を取得しました。");
     return;
   }
 
