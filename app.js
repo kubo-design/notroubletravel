@@ -27,7 +27,7 @@ const state = {
 Object.defineProperty(state, "transportPlan", {
   get() {
     if (!state.transportDays.length) {
-      state.transportDays.push({ origin: "", points: [], expanded: true });
+      state.transportDays.push({ origin: "", points: [], expanded: true, completed: false, orderKey: 0 });
       state.activeDayIndex = 0;
     }
     if (state.activeDayIndex < 0 || state.activeDayIndex >= state.transportDays.length) {
@@ -126,18 +126,21 @@ function loadJson(key, fallback) {
 }
 
 function loadTransportDays() {
-  const fallback = [{ origin: "", points: [], expanded: true }];
+  const fallback = [{ origin: "", points: [], expanded: true, completed: false, orderKey: 0 }];
   const days = loadJson("ntt-transport-days", fallback);
   if (!Array.isArray(days) || !days.length) return fallback;
   const normalized = days.map((day, idx) => {
     const origin = typeof day?.origin === "string" ? day.origin : "";
     const points = Array.isArray(day?.points) ? day.points.map(ensurePointObject) : [];
     const expanded = typeof day?.expanded === "boolean" ? day.expanded : idx === 0;
+    const headerEstimate = typeof day?.headerEstimate === "string" ? day.headerEstimate : "";
     const segmentTimes =
       day?.segmentTimes && typeof day.segmentTimes === "object" && !Array.isArray(day.segmentTimes)
         ? day.segmentTimes
         : {};
-    const next = { origin, points, expanded, segmentTimes };
+    const completed = typeof day?.completed === "boolean" ? day.completed : false;
+    const orderKey = Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx;
+    const next = { origin, points, expanded, headerEstimate, segmentTimes, completed, orderKey };
     normalizePlanPoints(next);
     return next;
   });
@@ -154,14 +157,31 @@ function saveTransportState() {
     const origin = typeof day?.origin === "string" ? day.origin : "";
     const points = Array.isArray(day?.points) ? day.points.map(ensurePointObject) : [];
     const expanded = typeof day?.expanded === "boolean" ? day.expanded : idx === state.activeDayIndex;
+    const headerEstimate = typeof day?.headerEstimate === "string" ? day.headerEstimate : "";
     const segmentTimes =
       day?.segmentTimes && typeof day.segmentTimes === "object" && !Array.isArray(day.segmentTimes)
         ? day.segmentTimes
         : {};
-    return { origin, points, expanded, segmentTimes };
+    const completed = typeof day?.completed === "boolean" ? day.completed : false;
+    const orderKey = Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx;
+    return { origin, points, expanded, headerEstimate, segmentTimes, completed, orderKey };
   });
   saveJson("ntt-transport-days", days);
   localStorage.setItem("ntt-active-day-index", String(state.activeDayIndex));
+}
+
+function getDayDisplayNumber(day, fallbackIndex = 0) {
+  const key = Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : fallbackIndex;
+  return key + 1;
+}
+
+function getNextDayOrderKey() {
+  if (!Array.isArray(state.transportDays) || !state.transportDays.length) return 0;
+  const max = state.transportDays.reduce((acc, day, idx) => {
+    const key = Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx;
+    return Math.max(acc, key);
+  }, -1);
+  return max + 1;
 }
 
 function getSegmentManualTime(dayIndex, segmentIndex) {
@@ -185,6 +205,29 @@ function setSegmentManualTime(dayIndex, segmentIndex, value) {
   }
 }
 
+function clearSegmentTimesForDay(dayIndex) {
+  const day = state.transportDays[dayIndex];
+  if (!day) return;
+  day.segmentTimes = {};
+}
+
+function clearSegmentTimesAroundMove(dayIndex, fromIndex, toIndex) {
+  const day = state.transportDays[dayIndex];
+  if (!day || !day.segmentTimes || typeof day.segmentTimes !== "object") return;
+  const minPoint = Math.min(fromIndex, toIndex);
+  const maxPoint = Math.max(fromIndex, toIndex);
+  // 入れ替えで影響するのは概ね前後区間なので、その近傍だけクリアする
+  const fromSeg = Math.max(0, minPoint - 1);
+  const toSeg = Math.max(0, maxPoint + 1);
+  Object.keys(day.segmentTimes).forEach((key) => {
+    const idx = Number(key);
+    if (!Number.isInteger(idx)) return;
+    if (idx >= fromSeg && idx <= toSeg) {
+      delete day.segmentTimes[key];
+    }
+  });
+}
+
 function formatMinutesShort(totalMinutes) {
   const minutes = Math.max(0, Number(totalMinutes) || 0);
   const hour = Math.floor(minutes / 60);
@@ -196,6 +239,16 @@ function formatMinutesShort(totalMinutes) {
 function buildSegmentTimeOptions(selectedValue = "") {
   const selected = String(selectedValue || "");
   let html = `<option value="" ${selected === "" ? "selected" : ""}>時間</option>`;
+  for (let minute = 5; minute <= 720; minute += 5) {
+    const label = formatMinutesShort(minute);
+    html += `<option value="${minute}" ${selected === String(minute) ? "selected" : ""}>${label}</option>`;
+  }
+  return html;
+}
+
+function buildHeaderEstimateOptions(selectedValue = "") {
+  const selected = String(selectedValue || "");
+  let html = `<option value="" ${selected === "" ? "selected" : ""}>予測</option>`;
   for (let minute = 5; minute <= 720; minute += 5) {
     const label = formatMinutesShort(minute);
     html += `<option value="${minute}" ${selected === String(minute) ? "selected" : ""}>${label}</option>`;
@@ -392,6 +445,7 @@ function saveOriginHistory(origin) {
   saveJson("ntt-origin-history", state.originHistory);
   renderOriginHistory();
   renderOriginInlineEditor();
+  refreshAllDayHistoryDropdownCaches();
 }
 
 function saveDefaultOrigin(value) {
@@ -416,6 +470,7 @@ function saveHotelUrlHistoryEntry(url, name) {
   const next = { url: normalizedUrl, name: normalizedName };
   state.hotelUrlHistory = [next, ...state.hotelUrlHistory.filter((item) => item.url !== normalizedUrl)].slice(0, 20);
   saveJson("ntt-hotel-url-history", state.hotelUrlHistory);
+  refreshAllDayHistoryDropdownCaches();
 }
 
 function renameHotelUrlHistoryEntry(url, nextName) {
@@ -433,6 +488,7 @@ function savePlaceHistory(name) {
   if (!normalized) return;
   state.placeHistory = [normalized, ...state.placeHistory.filter((item) => item !== normalized)].slice(0, 50);
   saveJson("ntt-place-history", state.placeHistory);
+  refreshAllDayHistoryDropdownCaches();
 }
 
 function findHotelUrlHistoryByName(name) {
@@ -465,15 +521,18 @@ function setHistoryByTarget(target, list) {
     state.originHistory = list;
     saveJson("ntt-origin-history", state.originHistory);
     renderOriginHistory();
+    refreshAllDayHistoryDropdownCaches();
     return;
   }
   if (target === "hotelUrl") {
     state.hotelUrlHistory = list;
     saveJson("ntt-hotel-url-history", state.hotelUrlHistory);
+    refreshAllDayHistoryDropdownCaches();
     return;
   }
   state.placeHistory = list;
   saveJson("ntt-place-history", state.placeHistory);
+  refreshAllDayHistoryDropdownCaches();
 }
 
 function replacePlaceHistoryName(prevName, nextName) {
@@ -809,6 +868,18 @@ function renderTopHistoryDropdownForElement(target, dropdown) {
       return `<button type="button" class="ghost tiny" data-use-top-history="${target}" data-history-value="${encodeURIComponent(item)}">${item}</button>`;
     })
     .join("");
+}
+
+function refreshAllDayHistoryDropdownCaches() {
+  const cards = ensureDayCardAccordionStructure();
+  cards.forEach((card) => {
+    const originDropdown = card.querySelector("[data-day-role='origin-history-dropdown']");
+    const destinationDropdown = card.querySelector("[data-day-role='destination-history-dropdown']");
+    const hotelUrlDropdown = card.querySelector("[data-day-role='hotel-url-history-dropdown']");
+    if (originDropdown) renderTopHistoryDropdownForElement("origin", originDropdown);
+    if (destinationDropdown) renderTopHistoryDropdownForElement("destination", destinationDropdown);
+    if (hotelUrlDropdown) renderTopHistoryDropdownForElement("hotelUrl", hotelUrlDropdown);
+  });
 }
 
 function closeAllDayHistoryDropdowns() {
@@ -1247,6 +1318,7 @@ function moveRoutePoint(fromIndex, toIndex) {
   const moved = state.transportPlan.points.splice(fromIndex, 1)[0];
   state.transportPlan.points.splice(toIndex, 0, moved);
   normalizeRoutePoints();
+  clearSegmentTimesAroundMove(state.activeDayIndex, fromIndex, toIndex);
 }
 
 function movePointToAnotherDay(fromDay, pointIndex, toDay) {
@@ -1265,6 +1337,8 @@ function movePointToAnotherDay(fromDay, pointIndex, toDay) {
 
   normalizePlanPoints(fromPlan);
   normalizePlanPoints(toPlan);
+  clearSegmentTimesForDay(fromDay);
+  clearSegmentTimesForDay(toDay);
 
   const reflected = toPlan.points.some((p) => {
     const normalized = ensurePointObject(p);
@@ -1275,7 +1349,7 @@ function movePointToAnotherDay(fromDay, pointIndex, toDay) {
 
 function ensurePointObject(point) {
   if (typeof point === "string") {
-    return { name: point, url: "", candidates: [], isDestination: false, expanded: false };
+    return { name: point, url: "", candidates: [], isDestination: false, expanded: false, checked: false };
   }
   return {
     name: point?.name || "",
@@ -1283,6 +1357,7 @@ function ensurePointObject(point) {
     candidates: Array.isArray(point?.candidates) ? point.candidates : [],
     isDestination: Boolean(point?.isDestination),
     expanded: Boolean(point?.expanded),
+    checked: Boolean(point?.checked),
   };
 }
 
@@ -1454,10 +1529,6 @@ function setActiveDay(dayIndex) {
   if (!Number.isInteger(dayIndex)) return;
   if (dayIndex < 0 || dayIndex >= state.transportDays.length) return;
   state.activeDayIndex = dayIndex;
-  const title = document.querySelector("#day-sections > .card > .section-head h2");
-  if (title) {
-    title.textContent = `DAY${dayIndex + 1}`;
-  }
   els.originInput.value = state.transportPlan.origin || "";
   if (els.destinationInput) {
     const destinationPoint = (state.transportPlan.points || [])
@@ -1475,7 +1546,8 @@ function renumberDaySectionTitles() {
   cards.forEach((card, idx) => {
     const title = card.querySelector(".section-head h2");
     if (title) {
-      title.textContent = `DAY${idx + 1}`;
+      const day = state.transportDays[idx];
+      title.textContent = `DAY${getDayDisplayNumber(day, idx)}`;
     }
   });
 }
@@ -1485,7 +1557,12 @@ function ensureDayCardAccordionStructure() {
   if (!daySections) return [];
   const cards = Array.from(daySections.querySelectorAll(":scope > .card"));
   cards.forEach((card, index) => {
+    const dayData = state.transportDays[index] || {};
     card.dataset.dayCardIndex = String(index);
+    card.dataset.dayOrderKey = String(
+      Number.isFinite(Number(dayData.orderKey)) ? Number(dayData.orderKey) : index,
+    );
+    card.classList.toggle("is-day-complete", Boolean(dayData.completed));
     const head = card.querySelector(":scope > .section-head");
     if (!head) return;
 
@@ -1501,6 +1578,30 @@ function ensureDayCardAccordionStructure() {
         head.prepend(dayTitle);
       }
     }
+
+    let dayTitleMain = dayTitle.querySelector(".day-title-main");
+    if (!dayTitleMain) {
+      dayTitleMain = document.createElement("div");
+      dayTitleMain.className = "day-title-main";
+      const title = dayTitle.querySelector("h2");
+      if (title) {
+        dayTitle.insertBefore(dayTitleMain, title);
+        dayTitleMain.appendChild(title);
+      } else {
+        dayTitle.prepend(dayTitleMain);
+      }
+    }
+
+    let dayCompleteCheck = dayTitleMain.querySelector(".day-complete-check");
+    if (!dayCompleteCheck) {
+      dayCompleteCheck = document.createElement("input");
+      dayCompleteCheck.type = "checkbox";
+      dayCompleteCheck.className = "day-complete-check";
+      dayCompleteCheck.setAttribute("aria-label", "DAY完了");
+      dayTitleMain.prepend(dayCompleteCheck);
+    }
+    dayCompleteCheck.dataset.dayComplete = String(index);
+    dayCompleteCheck.checked = Boolean(dayData.completed);
 
     let tools = head.querySelector(".input-tools");
     if (!tools) {
@@ -1565,6 +1666,10 @@ function ensureDayCardAccordionStructure() {
     if (routeList) routeList.dataset.dayRole = "route-list";
     const detailBox = card.querySelector("#transport-detail, [data-day-role='transport-detail']");
     if (detailBox) detailBox.dataset.dayRole = "transport-detail";
+    const dayHeaderTime = card.querySelector("select[data-day-role='day-header-time-select']");
+    if (dayHeaderTime) {
+      dayHeaderTime.innerHTML = buildHeaderEstimateOptions(state.transportDays[index]?.headerEstimate || "");
+    }
   });
   return cards;
 }
@@ -1589,8 +1694,14 @@ function isDayCardOpen(card) {
 function setupDayAccordionDefaults() {
   const cards = ensureDayCardAccordionStructure();
   if (!cards.length) return;
+  let openIndex = Number.isInteger(state.activeDayIndex) ? state.activeDayIndex : 0;
+  if (openIndex < 0 || openIndex >= cards.length || state.transportDays[openIndex]?.completed) {
+    const firstIncomplete = state.transportDays.findIndex((day) => !day.completed);
+    openIndex = firstIncomplete >= 0 ? firstIncomplete : 0;
+  }
+  state.activeDayIndex = openIndex;
   cards.forEach((card, idx) => {
-    setDayCardOpen(card, idx === 0);
+    setDayCardOpen(card, idx === openIndex);
   });
 }
 
@@ -1734,7 +1845,32 @@ function addDaySectionFromCard(sourceCard) {
   daySections.insertBefore(clonedCard, sourceCard.nextSibling);
   renumberDaySectionTitles();
   setDayCardOpen(clonedCard, false);
+  refreshAllDayHistoryDropdownCaches();
   return newDayIndex;
+}
+
+function ensureDayCardsMatchStateDays() {
+  const daySections = document.getElementById("day-sections");
+  if (!daySections) return;
+  if (!Array.isArray(state.transportDays) || !state.transportDays.length) {
+    state.transportDays = [{ origin: "", points: [], expanded: true, headerEstimate: "", segmentTimes: {}, completed: false, orderKey: 0 }];
+  }
+
+  let cards = Array.from(daySections.querySelectorAll(":scope > .card"));
+  if (!cards.length) return;
+
+  while (cards.length < state.transportDays.length) {
+    const source = cards[0];
+    const clonedCard = source.cloneNode(true);
+    removeIdsFromCard(clonedCard);
+    daySections.appendChild(clonedCard);
+    cards = Array.from(daySections.querySelectorAll(":scope > .card"));
+  }
+
+  while (cards.length > state.transportDays.length && cards.length > 1) {
+    cards[cards.length - 1].remove();
+    cards = Array.from(daySections.querySelectorAll(":scope > .card"));
+  }
 }
 
 function removeDaySectionByButton(button) {
@@ -1835,7 +1971,10 @@ function addRouteDay(afterDayIndex = null) {
     origin: "",
     points: [],
     expanded: false,
+    headerEstimate: "",
     segmentTimes: {},
+    completed: false,
+    orderKey: getNextDayOrderKey(),
   };
   let insertedIndex = state.transportDays.length;
   if (Number.isInteger(afterDayIndex) && afterDayIndex >= 0 && afterDayIndex < state.transportDays.length) {
@@ -1864,10 +2003,64 @@ function normalizeAllDays() {
     if (typeof day.expanded !== "boolean") {
       day.expanded = idx === 0;
     }
+    if (typeof day.completed !== "boolean") {
+      day.completed = false;
+    }
+    if (!Number.isFinite(Number(day.orderKey))) {
+      day.orderKey = idx;
+    }
     if (!day.segmentTimes || typeof day.segmentTimes !== "object" || Array.isArray(day.segmentTimes)) {
       day.segmentTimes = {};
     }
   });
+}
+
+function sortDaysByCompletionAndOrder() {
+  const daySections = document.getElementById("day-sections");
+  if (!daySections || !Array.isArray(state.transportDays) || !state.transportDays.length) return;
+
+  const cards = ensureDayCardAccordionStructure();
+  const cardByOrderKey = new Map();
+  cards.forEach((card, idx) => {
+    const orderKey = Number.isFinite(Number(state.transportDays[idx]?.orderKey))
+      ? Number(state.transportDays[idx].orderKey)
+      : idx;
+    cardByOrderKey.set(String(orderKey), card);
+  });
+
+  const activeOrderKey = Number.isFinite(Number(state.transportDays[state.activeDayIndex]?.orderKey))
+    ? Number(state.transportDays[state.activeDayIndex].orderKey)
+    : null;
+
+  state.transportDays.sort((a, b) => {
+    if (Boolean(a.completed) !== Boolean(b.completed)) {
+      return a.completed ? 1 : -1;
+    }
+    return Number(a.orderKey) - Number(b.orderKey);
+  });
+
+  state.transportDays.forEach((day) => {
+    const card = cardByOrderKey.get(String(day.orderKey));
+    if (card) daySections.appendChild(card);
+  });
+
+  let nextActiveIndex = state.transportDays.findIndex((day) => Number(day.orderKey) === activeOrderKey);
+  if (nextActiveIndex < 0) nextActiveIndex = 0;
+  if (state.transportDays[nextActiveIndex]?.completed) {
+    const firstIncomplete = state.transportDays.findIndex((day) => !day.completed);
+    if (firstIncomplete >= 0) {
+      nextActiveIndex = firstIncomplete;
+    }
+  }
+  state.activeDayIndex = nextActiveIndex;
+
+  const refreshed = ensureDayCardAccordionStructure();
+  refreshed.forEach((card, idx) => {
+    setDayCardOpen(card, idx === state.activeDayIndex);
+  });
+  renumberDaySectionTitles();
+  refreshAllDayHistoryDropdownCaches();
+  saveTransportState();
 }
 
 function buildRouteListHtmlForDay(dayIndex) {
@@ -1882,8 +2075,10 @@ function buildRouteListHtmlForDay(dayIndex) {
   const rowHtmlList = waypoints.map(({ point, sourceIndex }) => {
     const moveDayOptions =
       state.transportDays.length > 1
-        ? state.transportDays.map((_, idx) => `<option value="${idx}" ${idx === dayIndex ? "selected" : ""}>DAY${idx + 1}</option>`).join("")
-        : `<option value="${dayIndex}" selected>DAY${dayIndex + 1}</option>`;
+        ? state.transportDays
+            .map((item, idx) => `<option value="${idx}" ${idx === dayIndex ? "selected" : ""}>DAY${getDayDisplayNumber(item, idx)}</option>`)
+            .join("")
+        : `<option value="${dayIndex}" selected>DAY${getDayDisplayNumber(state.transportDays[dayIndex], dayIndex)}</option>`;
     const key = `${dayIndex}:${sourceIndex}`;
     const isEmptyWaypoint = !(point.name || "").trim();
     return `
@@ -1891,7 +2086,8 @@ function buildRouteListHtmlForDay(dayIndex) {
         <div class="route-waypoint-head">
           <span class="drag-handle">⠿</span>
           <button type="button" class="ghost tiny route-toggle-btn" data-toggle-point="${key}" aria-label="経由地開閉">${point.expanded ? "▼" : "▶"}</button>
-          <input type="text" class="route-point-input" data-point-input="${dayIndex}:${sourceIndex}" value="${point.name}" placeholder="経由地を入力" />
+          <input type="checkbox" class="route-point-check" data-point-check="${dayIndex}:${sourceIndex}" ${point.checked ? "checked" : ""} aria-label="経由地チェック" />
+          <input type="text" class="route-point-input ${point.checked ? "is-waypoint-checked" : ""}" data-point-input="${dayIndex}:${sourceIndex}" value="${point.name}" placeholder="経由地を入力" />
           <button type="button" class="tiny route-btn-black" data-remove-point="${dayIndex}:${sourceIndex}" aria-label="削除">×</button>
         </div>
         <div class="route-waypoint-body ${point.expanded ? "" : "hidden"}">
@@ -1950,14 +2146,14 @@ function buildRouteListHtmlForDay(dayIndex) {
           canOpen
             ? `<button type="button" class="ghost tiny" data-open-segment-from="${encodeURIComponent(from)}" data-open-segment-to="${encodeURIComponent(to)}">G Map</button>
                <button type="button" class="ghost tiny" data-open-segment-yahoo-from="${encodeURIComponent(from)}" data-open-segment-yahoo-to="${encodeURIComponent(to)}">Y Nav</button>`
-            : `<button type="button" class="ghost tiny" data-open-segment-disabled data-segment-reason="${reason}">G Map</button>
-               <button type="button" class="ghost tiny" data-open-segment-yahoo-disabled data-segment-reason="${reason}">Y Nav</button>`
+            : `<button type="button" class="ghost tiny route-segment-disabled-btn" data-open-segment-disabled data-segment-reason="${reason}" disabled>G Map</button>
+               <button type="button" class="ghost tiny route-segment-disabled-btn" data-open-segment-yahoo-disabled data-segment-reason="${reason}" disabled>Y Nav</button>`
         }
         <span class="route-segment-time">${getDriveTimeLabel(from, to)}</span>
-        <select class="tiny route-segment-time-select" data-segment-time-select="${dayIndex}:${segmentVisualIndex}">
+        <select class="tiny route-segment-time-select ${canOpen ? "" : "route-segment-time-disabled"}" data-segment-time-select="${dayIndex}:${segmentVisualIndex}" ${canOpen ? "" : "disabled"}>
           ${optionsHtml}
         </select>
-        <button type="button" class="ghost tiny" data-add-waypoint-at="${dayIndex}:${insertAtIndex}">追加</button>
+        <button type="button" class="ghost tiny route-segment-add-btn" data-add-waypoint-at="${dayIndex}:${insertAtIndex}" ${canOpen ? "" : "disabled"}>追加</button>
       </li>
     `;
     segmentVisualIndex += 1;
@@ -1967,8 +2163,8 @@ function buildRouteListHtmlForDay(dayIndex) {
   let fromName = (day.origin || "").trim();
   waypoints.forEach(({ point, sourceIndex }, idx) => {
     const waypointName = (point.name || "").trim();
+    routeItemsHtml += renderSegmentRow(fromName, waypointName, sourceIndex);
     if (waypointName) {
-      routeItemsHtml += renderSegmentRow(fromName, waypointName, sourceIndex);
       fromName = waypointName;
     }
     routeItemsHtml += rowHtmlList[idx] || "";
@@ -2024,7 +2220,7 @@ function renderTransportDetail() {
     ${transport.origin} → ${transport.destination}<br />
     経由地: ${transport.waypoints.length ? transport.waypoints.join(" / ") : "なし"}<br />
     <button type="button" class="ghost tiny" data-open-full-route>GoogleMapで全体ルートを表示</button>
-    <button type="button" class="ghost tiny" data-open-full-route-yahoo>Yahooカーナビで全体ルートを表示</button>
+    <button type="button" class="ghost tiny" data-open-full-route-yahoo>Yahooナビで全体ルートを表示</button>
   `;
 }
 
@@ -2280,6 +2476,24 @@ function parseDayAndIndex(value) {
   return { dayIndex, pointIndex };
 }
 
+function rerenderRouteListKeepingPointFocus(pointKey, selectionStart = null, selectionEnd = null) {
+  renderRouteList();
+  renderTransportDetail();
+  if (!pointKey) return;
+  const nextInput = Array.from(els.routeList.querySelectorAll("input[data-point-input]")).find(
+    (el) => el.dataset.pointInput === pointKey,
+  );
+  if (!nextInput) return;
+  nextInput.focus({ preventScroll: true });
+  if (Number.isInteger(selectionStart) && Number.isInteger(selectionEnd)) {
+    try {
+      nextInput.setSelectionRange(selectionStart, selectionEnd);
+    } catch {
+      // noop
+    }
+  }
+}
+
 els.transportForm.addEventListener("submit", (e) => {
   e.preventDefault();
   handleAddRoutePoint();
@@ -2376,7 +2590,7 @@ document.addEventListener("click", (e) => {
     }
     openYahooCarNaviRoute(transport.origin, transport.destination);
     if (transport.waypoints.length) {
-      setStatus("Yahooカーナビでは経由地を自動反映しないため、遷移先で経由地を追加してください。");
+      setStatus("Yahooナビでは経由地を自動反映しないため、遷移先で経由地を追加してください。");
     }
     return;
   }
@@ -2432,6 +2646,32 @@ document.addEventListener("click", (e) => {
 });
 
 document.addEventListener("change", async (e) => {
+  const dayCompleteCheck = e.target.closest("input.day-complete-check[data-day-complete]");
+  if (dayCompleteCheck) {
+    const card = dayCompleteCheck.closest(".card");
+    const dayIndex = card ? Number(card.dataset.dayCardIndex) : NaN;
+    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+      state.transportDays[dayIndex].completed = dayCompleteCheck.checked;
+      if (dayCompleteCheck.checked) {
+        state.transportDays[dayIndex].expanded = false;
+      }
+      sortDaysByCompletionAndOrder();
+      setStatus(dayCompleteCheck.checked ? "DAYを完了にしました。" : "DAYの完了を解除しました。");
+    }
+    return;
+  }
+
+  const dayHeaderTimeSelect = e.target.closest("select[data-day-role='day-header-time-select']");
+  if (dayHeaderTimeSelect) {
+    const card = dayHeaderTimeSelect.closest(".card");
+    const dayIndex = card ? Number(card.dataset.dayCardIndex) : NaN;
+    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+      state.transportDays[dayIndex].headerEstimate = String(dayHeaderTimeSelect.value || "");
+      saveTransportState();
+    }
+    return;
+  }
+
   const dayImportInput = e.target.closest(".day-import-file");
   if (dayImportInput && dayImportInput.files && dayImportInput.files[0]) {
     try {
@@ -2815,9 +3055,15 @@ document.addEventListener("click", (e) => {
     target.closest("#hotel-url-history-btn") ||
     target.closest("#origin-history-btn") ||
     target.closest("#destination-history-btn") ||
+    target.closest("button[data-day-role='hotel-url-history-btn']") ||
+    target.closest("button[data-day-role='origin-history-btn']") ||
+    target.closest("button[data-day-role='destination-history-btn']") ||
     target.closest("#hotel-url-history-dropdown") ||
     target.closest("#origin-history-dropdown") ||
-    target.closest("#destination-history-dropdown")
+    target.closest("#destination-history-dropdown") ||
+    target.closest("[data-day-role='hotel-url-history-dropdown']") ||
+    target.closest("[data-day-role='origin-history-dropdown']") ||
+    target.closest("[data-day-role='destination-history-dropdown']")
   ) {
     return;
   }
@@ -2830,6 +3076,17 @@ if (els.destinationInput) {
     syncDestinationFromInput(els.destinationInput.value);
   });
 }
+
+document.addEventListener("input", (e) => {
+  const destinationInput = e.target.closest("input[data-day-role='destination-input']");
+  if (!destinationInput) return;
+  const card = destinationInput.closest(".card");
+  const dayIndex = Number(card?.dataset.dayCardIndex);
+  if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+    setActiveDay(dayIndex);
+  }
+  syncDestinationFromInput(destinationInput.value, { saveHistory: false });
+});
 
 if (els.exportAllDaysBtn) {
   els.exportAllDaysBtn.addEventListener("click", () => {
@@ -3036,11 +3293,11 @@ els.routeList.addEventListener("click", (e) => {
         return;
       }
       openYahooCarNaviRoute(segment.from, segment.to);
-      setStatus(`区間「${segment.from} → ${segment.to}」をYahooカーナビで表示します。`);
+      setStatus(`区間「${segment.from} → ${segment.to}」をYahooナビで表示します。`);
       return;
     }
     openYahooCarNaviRoute(from, to);
-    setStatus(`区間「${from} → ${to}」をYahooカーナビで表示します。`);
+    setStatus(`区間「${from} → ${to}」をYahooナビで表示します。`);
     return;
   }
 
@@ -3157,7 +3414,7 @@ els.routeList.addEventListener("click", (e) => {
     renderHotelResults();
     renderRouteListIntoDayCard(toDay);
     renderTransportDetail();
-    setStatus(`DAY${dayIndex + 1}からDAY${toDay + 1}へ移動しました。`);
+    setStatus(`DAY${dayIndex + 1}からDAY${toDay + 1}へ移動しました（関連予測時間をクリア）。`);
     return;
   }
 
@@ -3168,7 +3425,7 @@ els.routeList.addEventListener("click", (e) => {
     moveRoutePoint(pointIndex, Math.max(0, pointIndex - 1));
     renderRouteList();
     renderTransportDetail();
-    setStatus("ルート順を変更しました。");
+    setStatus("ルート順を変更しました（関連区間の予測をクリア）。");
     return;
   }
 
@@ -3179,7 +3436,7 @@ els.routeList.addEventListener("click", (e) => {
     moveRoutePoint(pointIndex, Math.min(state.transportPlan.points.length - 1, pointIndex + 1));
     renderRouteList();
     renderTransportDetail();
-    setStatus("ルート順を変更しました。");
+    setStatus("ルート順を変更しました（関連区間の予測をクリア）。");
   }
 });
 
@@ -3202,7 +3459,7 @@ if (els.transportDetail) {
 
     openYahooCarNaviRoute(transport.origin, transport.destination);
     if (transport.waypoints.length) {
-      setStatus("Yahooカーナビでは経由地を自動反映しないため、遷移先で経由地を追加してください。");
+      setStatus("Yahooナビでは経由地を自動反映しないため、遷移先で経由地を追加してください。");
     }
   });
 }
@@ -3211,12 +3468,15 @@ els.routeList.addEventListener("input", (e) => {
   const nameInput = e.target.closest("input[data-point-input]");
   if (nameInput) {
     const { dayIndex, pointIndex } = parseDayAndIndex(nameInput.dataset.pointInput);
+    const key = nameInput.dataset.pointInput;
+    const selStart = nameInput.selectionStart;
+    const selEnd = nameInput.selectionEnd;
     setActiveDay(dayIndex);
     if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= state.transportPlan.points.length) return;
     const current = ensurePointObject(state.transportPlan.points[pointIndex]);
     state.transportPlan.points[pointIndex] = { ...current, name: nameInput.value };
     normalizeRoutePoints();
-    renderTransportDetail();
+    rerenderRouteListKeepingPointFocus(key, selStart, selEnd);
     return;
   }
 
@@ -3232,6 +3492,22 @@ els.routeList.addEventListener("input", (e) => {
 });
 
 els.routeList.addEventListener("change", (e) => {
+  const pointCheck = e.target.closest("input[data-point-check]");
+  if (pointCheck) {
+    const { dayIndex, pointIndex } = parseDayAndIndex(pointCheck.dataset.pointCheck);
+    setActiveDay(dayIndex);
+    if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= state.transportPlan.points.length) return;
+    const current = ensurePointObject(state.transportPlan.points[pointIndex]);
+    state.transportPlan.points[pointIndex] = { ...current, checked: pointCheck.checked };
+    const row = pointCheck.closest(".route-waypoint-head");
+    const nameInput = row ? row.querySelector("input[data-point-input]") : null;
+    if (nameInput) {
+      nameInput.classList.toggle("is-waypoint-checked", pointCheck.checked);
+    }
+    saveTransportState();
+    return;
+  }
+
   const segmentTimeSelect = e.target.closest("select[data-segment-time-select]");
   if (segmentTimeSelect) {
     const { dayIndex, pointIndex } = parseDayAndIndex(segmentTimeSelect.dataset.segmentTimeSelect);
@@ -3326,6 +3602,8 @@ els.routeList.addEventListener("drop", (e) => {
     toPlan.points.push({ ...moving, isDestination: false });
     normalizePlanPoints(fromPlan);
     normalizePlanPoints(toPlan);
+    clearSegmentTimesForDay(fromDay);
+    clearSegmentTimesForDay(toDay);
   }
   renderRouteList();
   renderTransportDetail();
@@ -3444,7 +3722,7 @@ if (els.clearAll) {
   els.clearAll.addEventListener("click", () => {
   state.hotels = [];
   state.selectedHotel = null;
-  state.transportDays = [{ origin: "", points: [], expanded: true, segmentTimes: {} }];
+  state.transportDays = [{ origin: "", points: [], expanded: true, segmentTimes: {}, completed: false, orderKey: 0 }];
   state.activeDayIndex = 0;
   state.draggedPointIndex = null;
   state.draggedDayIndex = null;
@@ -3471,6 +3749,9 @@ if (els.clearAll) {
 
 function init() {
   normalizeStoredHistories();
+  normalizeAllDays();
+  sortDaysByCompletionAndOrder();
+  ensureDayCardsMatchStateDays();
   if (els.defaultOriginInput) {
     els.defaultOriginInput.value = state.defaultOrigin;
   }
@@ -3502,6 +3783,7 @@ function init() {
   renderSpots();
   renderHistory();
   renumberDaySectionTitles();
+  refreshAllDayHistoryDropdownCaches();
   setupDayAccordionDefaults();
   setStatus("");
 }

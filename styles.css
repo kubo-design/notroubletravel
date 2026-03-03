@@ -122,6 +122,12 @@ h3 {
   row-gap: 4px;
 }
 
+.day-title-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .day-title h2 {
   margin: 0;
   order: 1;
@@ -130,6 +136,19 @@ h3 {
 .day-title .day-accordion-toggle {
   order: 2;
   justify-self: start;
+}
+
+.day-complete-check {
+  width: 18px;
+  height: 18px;
+  accent-color: #5c6773;
+  cursor: pointer;
+}
+
+.card.is-day-complete .day-card-head {
+  background: #e6ebf0;
+  border-color: #ccd4dd;
+  opacity: 0.9;
 }
 
 .day-actions {
@@ -712,6 +731,32 @@ td {
   padding-bottom: 10px;
 }
 
+.route-segment-disabled-btn,
+.route-segment-only button:disabled:not(.route-segment-add-btn) {
+  background: #d7dee6 !important;
+  color: #7b8794 !important;
+  border-color: #c5ced8 !important;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.route-segment-add-btn:disabled {
+  background: #fff !important;
+  color: inherit !important;
+  border-color: var(--line) !important;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.route-segment-time-disabled,
+.route-segment-time-select:disabled {
+  background: #d7dee6 !important;
+  color: #7b8794 !important;
+  border-color: #c5ced8 !important;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
 .route-day {
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -745,7 +790,7 @@ td {
 }
 
 .route-waypoint-item.is-empty-waypoint {
-  background: #eef2f6;
+  background: transparent;
 }
 
 .route-waypoint-head {
@@ -759,6 +804,22 @@ td {
 .route-waypoint-head .route-point-input {
   flex: 1 1 auto;
   min-width: 140px;
+}
+
+.route-point-check {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.route-point-input.is-waypoint-checked {
+  background: #9ca3af;
+  color: #fff;
+  border-color: #8a94a1;
+}
+
+.route-point-input.is-waypoint-checked::placeholder {
+  color: #edf2f7;
 }
 
 .route-toggle-btn,
