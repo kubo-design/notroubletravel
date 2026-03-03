@@ -173,13 +173,19 @@ function setSegmentManualTime(dayIndex, segmentIndex, value) {
   }
 }
 
+function formatMinutesShort(totalMinutes) {
+  const minutes = Math.max(0, Number(totalMinutes) || 0);
+  const hour = Math.floor(minutes / 60);
+  const min = minutes % 60;
+  if (hour <= 0) return `${min}m`;
+  return `${hour}h${String(min).padStart(2, "0")}m`;
+}
+
 function buildSegmentTimeOptions(selectedValue = "") {
   const selected = String(selectedValue || "");
   let html = `<option value="" ${selected === "" ? "selected" : ""}>時間</option>`;
   for (let minute = 5; minute <= 720; minute += 5) {
-    const hour = Math.floor(minute / 60);
-    const min = minute % 60;
-    const label = hour > 0 ? `${hour}時間${String(min).padStart(2, "0")}分` : `${min}分`;
+    const label = formatMinutesShort(minute);
     html += `<option value="${minute}" ${selected === String(minute) ? "selected" : ""}>${label}</option>`;
   }
   return html;
@@ -349,7 +355,7 @@ function getDriveTimeLabel(fromName, toName) {
   const km = haversineKm(from, to);
   const roadKm = km * 1.25;
   const minutes = Math.max(1, Math.round((roadKm / 40) * 60));
-  return `予測 ${minutes}分`;
+  return `予測 ${formatMinutesShort(minutes)}`;
 }
 
 function saveOriginHistory(origin) {
@@ -1246,6 +1252,7 @@ function buildRouteSegments(plan = state.transportPlan) {
 }
 
 function renderSegmentDetail(segment) {
+  if (!els.transportDetail) return;
   if (!segment) return;
   els.transportDetail.classList.remove("muted");
   els.transportDetail.innerHTML = `
@@ -1694,10 +1701,10 @@ function buildRouteListHtmlForDay(dayIndex) {
     return `
       <li class="route-item route-waypoint-item ${isEmptyWaypoint ? "is-empty-waypoint" : ""}" draggable="true" data-day-index="${dayIndex}" data-index="${sourceIndex}">
         <div class="route-waypoint-head">
+          <span class="drag-handle">⠿</span>
           <button type="button" class="ghost tiny route-toggle-btn" data-toggle-point="${key}" aria-label="経由地開閉">${point.expanded ? "▼" : "▶"}</button>
           <input type="text" class="route-point-input" data-point-input="${dayIndex}:${sourceIndex}" value="${point.name}" placeholder="経由地を入力" />
-          <button type="button" class="tiny route-btn-black" data-remove-point="${dayIndex}:${sourceIndex}">削除</button>
-          <span class="drag-handle">⠿</span>
+          <button type="button" class="tiny route-btn-black" data-remove-point="${dayIndex}:${sourceIndex}" aria-label="削除">×</button>
         </div>
         <div class="route-waypoint-body ${point.expanded ? "" : "hidden"}">
           <div class="route-history-tools route-waypoint-history-tools">
@@ -1753,16 +1760,16 @@ function buildRouteListHtmlForDay(dayIndex) {
       <li class="route-segment-only">
         ${
           canOpen
-            ? `<button type="button" class="ghost tiny" data-open-segment-from="${encodeURIComponent(from)}" data-open-segment-to="${encodeURIComponent(to)}">GoogleMap</button>
-               <button type="button" class="ghost tiny" data-open-segment-yahoo-from="${encodeURIComponent(from)}" data-open-segment-yahoo-to="${encodeURIComponent(to)}">Yahooカーナビ</button>`
-            : `<button type="button" class="ghost tiny" data-open-segment-disabled data-segment-reason="${reason}">GoogleMap</button>
-               <button type="button" class="ghost tiny" data-open-segment-yahoo-disabled data-segment-reason="${reason}">Yahooカーナビ</button>`
+            ? `<button type="button" class="ghost tiny" data-open-segment-from="${encodeURIComponent(from)}" data-open-segment-to="${encodeURIComponent(to)}">G Map</button>
+               <button type="button" class="ghost tiny" data-open-segment-yahoo-from="${encodeURIComponent(from)}" data-open-segment-yahoo-to="${encodeURIComponent(to)}">Y Nav</button>`
+            : `<button type="button" class="ghost tiny" data-open-segment-disabled data-segment-reason="${reason}">G Map</button>
+               <button type="button" class="ghost tiny" data-open-segment-yahoo-disabled data-segment-reason="${reason}">Y Nav</button>`
         }
         <span class="route-segment-time">${getDriveTimeLabel(from, to)}</span>
         <select class="tiny route-segment-time-select" data-segment-time-select="${dayIndex}:${segmentVisualIndex}">
           ${optionsHtml}
         </select>
-        <button type="button" class="ghost tiny" data-add-waypoint-at="${dayIndex}:${insertAtIndex}">経由地を追加</button>
+        <button type="button" class="ghost tiny" data-add-waypoint-at="${dayIndex}:${insertAtIndex}">追加</button>
       </li>
     `;
     segmentVisualIndex += 1;
