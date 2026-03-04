@@ -3394,7 +3394,7 @@ document.addEventListener("click", (e) => {
 document.addEventListener("input", (e) => {
   const destinationInput = e.target.closest("input[data-day-role='destination-input']");
   if (!destinationInput) return;
-  updateDestinationByInputElement(destinationInput, { render: false, saveHistory: false });
+  updateDestinationByInputElement(destinationInput, { render: true, saveHistory: false });
 });
 
 document.addEventListener("change", (e) => {
@@ -3406,6 +3406,18 @@ document.addEventListener("change", (e) => {
     setActiveDay(dayIndex);
   }
   updateDestinationByInputElement(destinationInput, { render: true, saveHistory: true });
+});
+
+document.addEventListener("focusin", (e) => {
+  const dayScopedField = e.target.closest(
+    "input[data-day-role='origin-input'], input[data-day-role='destination-input'], input[data-point-input], input[data-point-url], select[data-day-role='day-header-time-select']",
+  );
+  if (!dayScopedField) return;
+  const card = dayScopedField.closest(".card");
+  const dayIndex = Number(card?.dataset.dayCardIndex);
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+  if (dayIndex === state.activeDayIndex) return;
+  setActiveDay(dayIndex);
 });
 
 if (els.exportAllDaysBtn) {
