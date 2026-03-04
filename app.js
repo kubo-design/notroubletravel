@@ -1,10 +1,18 @@
+const legacyOriginHistory = loadJson("ntt-origin-history", []);
+const initialPlaceHistoryRaw = loadJson("ntt-place-history", []);
+const initialPlaceHistory = [...initialPlaceHistoryRaw, ...legacyOriginHistory]
+  .map((item) => String(item || "").trim())
+  .filter(Boolean)
+  .filter((item, idx, arr) => arr.indexOf(item) === idx)
+  .slice(0, 50);
+
 const state = {
   hotels: [],
   selectedHotel: null,
-  originHistory: loadJson("ntt-origin-history", []),
+  originHistory: [],
   defaultOrigin: localStorage.getItem("ntt-default-origin") || "",
   hotelUrlHistory: loadJson("ntt-hotel-url-history", []),
-  placeHistory: loadJson("ntt-place-history", []),
+  placeHistory: initialPlaceHistory,
   activeHistoryDropdownIndex: null,
   activeTopHistoryDropdown: null,
   historyEditorChecks: {},
@@ -12,6 +20,7 @@ const state = {
   originInlineChecks: {},
   originInlineDragIndex: null,
   originInlineEditMode: false,
+  historyEditorAnchorKey: "",
   hotelExpanded: {},
   pendingExport: null,
   transportDays: loadTransportDays(),
@@ -22,7 +31,17 @@ const state = {
   history: loadJson("ntt-history", []),
   originUrlCandidates: [],
   destinationUrlCandidates: [],
+  destinationNameCandidates: [],
 };
+
+Object.defineProperty(state, "originHistory", {
+  get() {
+    return state.placeHistory;
+  },
+  set(value) {
+    state.placeHistory = Array.isArray(value) ? value : [];
+  },
+});
 
 Object.defineProperty(state, "transportPlan", {
   get() {
@@ -64,6 +83,9 @@ const els = {
   destinationHistoryEditBtn: document.getElementById("destination-history-edit-btn"),
   destinationHistoryDropdown: document.getElementById("destination-history-dropdown"),
   destinationUrlSuggestBtn: document.getElementById("destination-url-suggest-btn"),
+  destinationNameSuggestBtn: document.getElementById("destination-name-suggest-btn"),
+  destinationGoogleSearchBtn: document.getElementById("destination-google-search-btn"),
+  destinationNameCandidates: document.getElementById("destination-name-candidates"),
   destinationUrlCandidates: document.getElementById("destination-url-candidates"),
   destinationMapUrlWrap: document.getElementById("destination-map-url-wrap"),
   destinationMapUrlInput: document.getElementById("destination-map-url-input"),
@@ -238,7 +260,7 @@ function formatMinutesShort(totalMinutes) {
 
 function buildSegmentTimeOptions(selectedValue = "") {
   const selected = String(selectedValue || "");
-  let html = `<option value="" ${selected === "" ? "selected" : ""}>時間</option>`;
+  let html = `<option value="" ${selected === "" ? "selected" : ""}>予測時間</option>`;
   for (let minute = 5; minute <= 720; minute += 5) {
     const label = formatMinutesShort(minute);
     html += `<option value="${minute}" ${selected === String(minute) ? "selected" : ""}>${label}</option>`;
@@ -248,7 +270,7 @@ function buildSegmentTimeOptions(selectedValue = "") {
 
 function buildHeaderEstimateOptions(selectedValue = "") {
   const selected = String(selectedValue || "");
-  let html = `<option value="" ${selected === "" ? "selected" : ""}>予測</option>`;
+  let html = `<option value="" ${selected === "" ? "selected" : ""}>予測時間</option>`;
   for (let minute = 5; minute <= 720; minute += 5) {
     const label = formatMinutesShort(minute);
     html += `<option value="${minute}" ${selected === String(minute) ? "selected" : ""}>${label}</option>`;
@@ -441,8 +463,8 @@ function getDriveTimeLabel(fromName, toName) {
 function saveOriginHistory(origin) {
   const normalized = origin.trim();
   if (!normalized) return;
-  state.originHistory = [normalized, ...state.originHistory.filter((item) => item !== normalized)].slice(0, 10);
-  saveJson("ntt-origin-history", state.originHistory);
+  state.placeHistory = [normalized, ...state.placeHistory.filter((item) => item !== normalized)].slice(0, 50);
+  saveJson("ntt-place-history", state.placeHistory);
   renderOriginHistory();
   renderOriginInlineEditor();
   refreshAllDayHistoryDropdownCaches();
@@ -452,6 +474,14 @@ function saveDefaultOrigin(value) {
   const normalized = (value || "").trim();
   state.defaultOrigin = normalized;
   localStorage.setItem("ntt-default-origin", normalized);
+  refreshOriginInputPlaceholders();
+}
+
+function refreshOriginInputPlaceholders() {
+  const placeholder = (state.defaultOrigin || "").trim() || "出発地";
+  document.querySelectorAll("input[list='origin-history']").forEach((input) => {
+    input.placeholder = placeholder;
+  });
 }
 
 function saveHotelUrlHistory(url, preferredName = "") {
@@ -511,16 +541,17 @@ function ensureHotelInListFromHistoryName(name) {
 }
 
 function getHistoryByTarget(target) {
-  if (target === "origin") return state.originHistory;
+  if (target === "origin") return state.placeHistory;
   if (target === "hotelUrl") return state.hotelUrlHistory;
   return state.placeHistory;
 }
 
 function setHistoryByTarget(target, list) {
   if (target === "origin") {
-    state.originHistory = list;
-    saveJson("ntt-origin-history", state.originHistory);
+    state.placeHistory = list;
+    saveJson("ntt-place-history", state.placeHistory);
     renderOriginHistory();
+    renderOriginInlineEditor();
     refreshAllDayHistoryDropdownCaches();
     return;
   }
@@ -547,6 +578,33 @@ function replacePlaceHistoryName(prevName, nextName) {
   saveJson("ntt-place-history", state.placeHistory);
 }
 
+function renamePlaceHistoryEntry(prevName, nextNameRaw) {
+  const prev = (prevName || "").trim();
+  const next = (nextNameRaw || "").trim();
+  if (!prev) return false;
+  if (!next) {
+    setStatus("履歴名は空欄にできません。", true);
+    return false;
+  }
+  if (prev === next) return true;
+  const idx = state.placeHistory.findIndex((item) => (item || "").trim() === prev);
+  if (idx < 0) return false;
+  if (state.placeHistory.some((item, i) => i !== idx && (item || "").trim() === next)) {
+    setStatus("同じ履歴名が既にあります。", true);
+    return false;
+  }
+  state.placeHistory[idx] = next;
+  if (Object.prototype.hasOwnProperty.call(state.historyEditorChecks, prev)) {
+    state.historyEditorChecks[next] = state.historyEditorChecks[prev];
+    delete state.historyEditorChecks[prev];
+  }
+  saveJson("ntt-place-history", state.placeHistory);
+  renderOriginHistory();
+  renderOriginInlineEditor();
+  refreshAllDayHistoryDropdownCaches();
+  return true;
+}
+
 function renderHistoryEditorList() {
   if (!els.historyEditorList) return;
   const historyList = getHistoryByTarget(state.historyEditorTarget);
@@ -561,6 +619,21 @@ function renderHistoryEditorList() {
       const label = state.historyEditorTarget === "hotelUrl" ? item.name : item;
       const sub = state.historyEditorTarget === "hotelUrl" ? `<small class="muted">${item.url}</small>` : "";
       const checked = Boolean(state.historyEditorChecks[key]);
+      if (state.historyEditorTarget === "place" || state.historyEditorTarget === "origin") {
+        return `
+          <div class="origin-inline-item history-origin-item">
+            <label class="origin-inline-check-wrap">
+              <input type="checkbox" data-history-check="${encodeURIComponent(key)}" ${checked ? "checked" : ""} />
+            </label>
+            <input
+              type="text"
+              class="origin-inline-name-input history-item-input"
+              data-history-name-edit="${encodeURIComponent(key)}"
+              value="${escapeHtml(label)}"
+            />
+          </div>
+        `;
+      }
       return `
         <label class="history-item">
           <input type="checkbox" data-history-check="${encodeURIComponent(key)}" ${checked ? "checked" : ""} />
@@ -571,17 +644,93 @@ function renderHistoryEditorList() {
     .join("");
 }
 
-function openHistoryEditor(target = "place") {
+function isInlinePlaceEditorOpen(anchorKey) {
+  return (
+    state.historyEditorTarget === "place" &&
+    state.historyEditorAnchorKey === anchorKey &&
+    !els.historyEditorModal.classList.contains("hidden")
+  );
+}
+
+function syncPlaceInlineEditorButtons() {
+  if (els.destinationHistoryEditBtn) {
+    const open = isInlinePlaceEditorOpen("destination");
+    els.destinationHistoryEditBtn.textContent = open ? "✕" : "☰";
+    els.destinationHistoryEditBtn.classList.toggle("origin-edit-active", open);
+  }
+
+  document.querySelectorAll("button[data-edit-history]").forEach((btn) => {
+    const key = btn.dataset.editHistory || "";
+    const open = isInlinePlaceEditorOpen(`waypoint:${key}`);
+    btn.textContent = open ? "✕" : "☰";
+    btn.classList.toggle("origin-edit-active", open);
+  });
+}
+
+function openHistoryEditor(target = "place", anchorEl = null, anchorKey = "") {
+  if (target === "place" && anchorEl) {
+    const nextKey = anchorKey || "place-inline";
+    const isOpen = !els.historyEditorModal.classList.contains("hidden");
+    if (isOpen && state.historyEditorTarget === "place" && state.historyEditorAnchorKey === nextKey) {
+      closeHistoryEditor();
+      return;
+    }
+    state.historyEditorAnchorKey = nextKey;
+    state.historyEditorTarget = "place";
+    state.historyEditorChecks = {};
+    const hostRow = anchorEl.closest(".route-history-tools, .goal-action-row");
+    const host = hostRow ? hostRow.parentElement : anchorEl.closest(".route-waypoint-body, .section-body");
+    if (hostRow && host) {
+      hostRow.insertAdjacentElement("afterend", els.historyEditorModal);
+    } else if (host) {
+      host.prepend(els.historyEditorModal);
+    }
+    els.historyEditorModal.classList.add("inline-history-accordion");
+    els.historyEditorModal.classList.remove("hidden");
+    els.historyEditorModal.setAttribute("aria-hidden", "false");
+    renderHistoryEditorList();
+    syncPlaceInlineEditorButtons();
+    return;
+  }
+
+  state.historyEditorAnchorKey = anchorKey || "";
   state.historyEditorTarget = target;
   state.historyEditorChecks = {};
   els.historyEditorModal.classList.remove("hidden");
+  els.historyEditorModal.classList.remove("inline-history-accordion");
   els.historyEditorModal.setAttribute("aria-hidden", "false");
+  const panel = els.historyEditorModal.querySelector(".history-modal-panel");
+  if (anchorEl instanceof Element) {
+    const rect = anchorEl.getBoundingClientRect();
+    const host = anchorEl.closest(".section-body, .route-waypoint-body, .goal-action-row, .origin-action-row") || document.body;
+    const hostRect = host.getBoundingClientRect();
+    const panelWidth = Math.min(560, Math.max(320, Math.min(hostRect.width, window.innerWidth - 24)));
+    const left = Math.min(
+      Math.max(12, rect.left),
+      Math.max(12, window.innerWidth - panelWidth - 12),
+    );
+    const top = Math.min(rect.bottom + 8, Math.max(12, window.innerHeight - 120));
+    els.historyEditorModal.style.left = `${left}px`;
+    els.historyEditorModal.style.top = `${top}px`;
+    if (panel) panel.style.width = `${panelWidth}px`;
+  } else {
+    els.historyEditorModal.style.left = "12px";
+    els.historyEditorModal.style.top = "72px";
+    if (panel) panel.style.width = "";
+  }
   renderHistoryEditorList();
+  syncPlaceInlineEditorButtons();
 }
 
 function closeHistoryEditor() {
   els.historyEditorModal.classList.add("hidden");
+  els.historyEditorModal.classList.remove("inline-history-accordion");
   els.historyEditorModal.setAttribute("aria-hidden", "true");
+  state.historyEditorAnchorKey = "";
+  if (els.historyEditorModal.parentElement !== document.body) {
+    document.body.appendChild(els.historyEditorModal);
+  }
+  syncPlaceInlineEditorButtons();
 }
 
 function renderOriginHistory() {
@@ -621,6 +770,33 @@ function renderDestinationUrlCandidates() {
         `<button type="button" class="ghost tiny" data-apply-destination-url-candidate="${encodeURIComponent(candidate)}">${escapeHtml(candidate)}</button>`,
     )
     .join("");
+}
+
+function renderDestinationNameCandidates() {
+  if (!els.destinationNameCandidates) return;
+  const list = Array.isArray(state.destinationNameCandidates) ? state.destinationNameCandidates : [];
+  if (!list.length) {
+    els.destinationNameCandidates.classList.add("hidden");
+    els.destinationNameCandidates.innerHTML = "";
+    if (els.destinationNameSuggestBtn) {
+      els.destinationNameSuggestBtn.textContent = "名称候補";
+      els.destinationNameSuggestBtn.classList.remove("route-btn-green-active");
+      els.destinationNameSuggestBtn.classList.add("route-btn-green");
+    }
+    return;
+  }
+  els.destinationNameCandidates.classList.remove("hidden");
+  els.destinationNameCandidates.innerHTML = list
+    .map(
+      (candidate) =>
+        `<button type="button" class="ghost tiny" data-apply-destination-name-candidate="${encodeURIComponent(candidate)}">${escapeHtml(candidate)}</button>`,
+    )
+    .join("");
+  if (els.destinationNameSuggestBtn) {
+    els.destinationNameSuggestBtn.textContent = "閉じる";
+    els.destinationNameSuggestBtn.classList.remove("route-btn-green");
+    els.destinationNameSuggestBtn.classList.add("route-btn-green-active");
+  }
 }
 
 function suggestCandidatesFromPastedUrl(target, sourceUrl = "") {
@@ -667,7 +843,7 @@ function renderOriginInlineEditor() {
   if (!defaultName && historyList.length) {
     saveDefaultOrigin(historyList[0].name);
     state.originHistory = historyList.slice(1).map((item) => item.name);
-    saveJson("ntt-origin-history", state.originHistory);
+    saveJson("ntt-place-history", state.originHistory);
   }
 
   const safeDefault = state.defaultOrigin || "";
@@ -734,7 +910,7 @@ function renameOriginHistoryBySourceIndex(sourceIndex, nextNameRaw) {
     state.originInlineChecks[next] = state.originInlineChecks[prev];
     delete state.originInlineChecks[prev];
   }
-  saveJson("ntt-origin-history", state.originHistory);
+  saveJson("ntt-place-history", state.originHistory);
   renderOriginHistory();
   renderOriginInlineEditor();
   setStatus("履歴名を更新しました。");
@@ -777,8 +953,8 @@ function moveOriginHistoryEntryToDefault(name) {
     .map((item) => (item || "").trim())
     .filter((item) => item && item !== normalized);
   saveDefaultOrigin(normalized);
-  state.originHistory = nextHistory.slice(0, 10);
-  saveJson("ntt-origin-history", state.originHistory);
+  state.originHistory = nextHistory.slice(0, 50);
+  saveJson("ntt-place-history", state.originHistory);
   if (els.originInput) {
     els.originInput.value = normalized;
   }
@@ -792,6 +968,14 @@ function moveOriginHistoryEntryToDefault(name) {
 }
 
 function normalizeStoredHistories() {
+  state.placeHistory = [...(state.placeHistory || []), ...loadJson("ntt-origin-history", [])]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .filter((item, idx, arr) => arr.indexOf(item) === idx)
+    .slice(0, 50);
+  saveJson("ntt-place-history", state.placeHistory);
+  localStorage.removeItem("ntt-origin-history");
+
   state.hotelUrlHistory = (state.hotelUrlHistory || [])
     .map((item) => {
       if (typeof item === "string") {
@@ -1133,7 +1317,7 @@ function isHotelSelectedForActiveDay(hotel) {
 
 function renderHotelResults() {
   if (!state.hotels.length) {
-    els.hotelResults.innerHTML = "<div class='hotel-empty'>登録がありません</div>";
+    els.hotelResults.innerHTML = "";
     return;
   }
 
@@ -1153,24 +1337,10 @@ function renderHotelResults() {
           </div>
           <div class="hotel-choice-detail ${isExpanded ? "" : "hidden"}">
             <div class="hotel-detail-summary">
-              <button type="button" class="ghost tiny" data-search-hotel-name="${h.id}">名称候補検索</button>
-              <button type="button" class="ghost tiny" data-close-hotel-candidates="${h.id}">候補を閉じる</button>
               <span>宿泊見積：<strong>¥${h.total.toLocaleString()}</strong>（${h.nights}泊）</span>
               <span>/</span>
               <span>${h.people}名</span>
             </div>
-            ${
-              Array.isArray(h.candidates) && h.candidates.length
-                ? `<div class="hotel-name-candidates">
-                    ${h.candidates
-                      .map(
-                        (candidate) =>
-                          `<button type="button" class="ghost tiny" data-apply-hotel-candidate="${h.id}" data-candidate-name="${encodeURIComponent(candidate)}">${escapeHtml(candidate)}</button>`,
-                      )
-                      .join("")}
-                  </div>`
-                : ""
-            }
             <div class="hotel-detail-actions">
               <a class="hotel-action-btn" href="${h.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(h.site)}</a>
               <button type="button" class="hotel-action-btn" data-google-search-hotel="${h.id}">Google検索</button>
@@ -1280,10 +1450,19 @@ function syncDestinationWithHotel(hotel) {
 function syncDestinationFromInput(destinationName, options = {}) {
   const { saveHistory = true } = options;
   const normalized = (destinationName || "").trim();
-  if (!normalized) return;
 
   normalizeRoutePoints();
   const destinationIndex = state.transportPlan.points.findIndex((p) => ensurePointObject(p).isDestination);
+  if (!normalized) {
+    if (destinationIndex >= 0) {
+      state.transportPlan.points.splice(destinationIndex, 1);
+      normalizeRoutePoints();
+      renderRouteList();
+      renderTransportDetail();
+    }
+    return;
+  }
+
   if (destinationIndex >= 0) {
     const current = ensurePointObject(state.transportPlan.points[destinationIndex]);
     state.transportPlan.points[destinationIndex] = {
@@ -1306,6 +1485,40 @@ function syncDestinationFromInput(destinationName, options = {}) {
   }
   renderRouteList();
   renderTransportDetail();
+}
+
+function updateDestinationByInputElement(inputEl, options = {}) {
+  const { render = false, saveHistory = false } = options;
+  const card = inputEl.closest(".card");
+  const dayIndexRaw = card ? Number(card.dataset.dayCardIndex) : NaN;
+  const dayIndex = Number.isInteger(dayIndexRaw) ? dayIndexRaw : state.activeDayIndex;
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+  const day = state.transportDays[dayIndex];
+  if (!day) return;
+
+  const normalized = (inputEl.value || "").trim();
+  normalizePlanPoints(day);
+  const destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+  if (!normalized) {
+    if (destinationIndex >= 0) {
+      day.points.splice(destinationIndex, 1);
+      normalizePlanPoints(day);
+    }
+  } else if (destinationIndex >= 0) {
+    const current = ensurePointObject(day.points[destinationIndex]);
+    day.points[destinationIndex] = { ...current, name: normalized, isDestination: true };
+  } else {
+    day.points.push({ name: normalized, url: "", candidates: [], isDestination: true, expanded: false });
+    normalizePlanPoints(day);
+  }
+
+  if (saveHistory && normalized) {
+    savePlaceHistory(normalized);
+  }
+  if (render && dayIndex === state.activeDayIndex) {
+    renderRouteList();
+    renderTransportDetail();
+  }
 }
 
 function moveRoutePoint(fromIndex, toIndex) {
@@ -1659,8 +1872,15 @@ function ensureDayCardAccordionStructure() {
     }
 
     const originInput = card.querySelector("#origin, input[list='origin-history']");
-    if (originInput) originInput.dataset.dayRole = "origin-input";
-    const destinationInput = card.querySelector("#destination-input, input[placeholder*='天城温泉']");
+    if (originInput) {
+      originInput.dataset.dayRole = "origin-input";
+      originInput.placeholder = (state.defaultOrigin || "").trim() || "出発地";
+    }
+    const destinationInput =
+      card.querySelector("#destination-input") ||
+      card.querySelector("input[data-day-role='destination-input']") ||
+      card.querySelector("input[placeholder='目的地']") ||
+      card.querySelector("input[placeholder*='GOAL']");
     if (destinationInput) destinationInput.dataset.dayRole = "destination-input";
     const routeList = card.querySelector("#route-list, .box.muted");
     if (routeList) routeList.dataset.dayRole = "route-list";
@@ -1679,6 +1899,33 @@ function setDayCardOpen(card, isOpen) {
   const toggle = card.querySelector(".day-accordion-toggle");
   if (body) {
     body.classList.toggle("hidden", !isOpen);
+  }
+  if (!isOpen) {
+    // DAYを閉じると、内部のSTART/GOALアコーディオンと経由地詳細も閉じる
+    card.querySelectorAll(".section-body").forEach((sectionBody) => {
+      sectionBody.classList.add("hidden");
+    });
+    card.querySelectorAll("button[data-section-toggle]").forEach((btn) => {
+      btn.textContent = "▶";
+      btn.classList.remove("is-open");
+      btn.setAttribute("aria-expanded", "false");
+    });
+
+    const dayIndex = Number(card.dataset.dayCardIndex);
+    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+      const day = state.transportDays[dayIndex];
+      if (day && Array.isArray(day.points)) {
+        day.points = day.points.map((point) => ({ ...ensurePointObject(point), expanded: false }));
+      }
+    }
+
+    // 描画済みDOM上の経由地詳細も確実に閉じる
+    card.querySelectorAll(".route-waypoint-body").forEach((waypointBody) => {
+      waypointBody.classList.add("hidden");
+    });
+    card.querySelectorAll("button[data-toggle-point]").forEach((btn) => {
+      btn.textContent = "▶";
+    });
   }
   if (toggle) {
     toggle.textContent = isOpen ? "▼" : "▶";
@@ -2085,7 +2332,7 @@ function buildRouteListHtmlForDay(dayIndex) {
       <li class="route-item route-waypoint-item ${isEmptyWaypoint ? "is-empty-waypoint" : ""}" draggable="true" data-day-index="${dayIndex}" data-index="${sourceIndex}">
         <div class="route-waypoint-head">
           <span class="drag-handle">⠿</span>
-          <button type="button" class="ghost tiny route-toggle-btn" data-toggle-point="${key}" aria-label="経由地開閉">${point.expanded ? "▼" : "▶"}</button>
+          <button type="button" class="ghost tiny route-toggle-btn" data-toggle-point="${key}" aria-label="経由地開閉" aria-expanded="${point.expanded ? "true" : "false"}">${point.expanded ? "▼" : "▶"}</button>
           <input type="checkbox" class="route-point-check" data-point-check="${dayIndex}:${sourceIndex}" ${point.checked ? "checked" : ""} aria-label="経由地チェック" />
           <input type="text" class="route-point-input ${point.checked ? "is-waypoint-checked" : ""}" data-point-input="${dayIndex}:${sourceIndex}" value="${point.name}" placeholder="経由地を入力" />
           <button type="button" class="tiny route-btn-black" data-remove-point="${dayIndex}:${sourceIndex}" aria-label="削除">×</button>
@@ -2093,7 +2340,7 @@ function buildRouteListHtmlForDay(dayIndex) {
         <div class="route-waypoint-body ${point.expanded ? "" : "hidden"}">
           <div class="route-history-tools route-waypoint-history-tools">
             <button type="button" class="ghost tiny" data-open-history="${key}">履歴から</button>
-            <button type="button" class="ghost tiny" data-edit-history="${key}">☰</button>
+            <button type="button" class="tiny origin-edit-btn ${isInlinePlaceEditorOpen(`waypoint:${key}`) ? "origin-edit-active" : ""}" data-edit-history="${key}">${isInlinePlaceEditorOpen(`waypoint:${key}`) ? "✕" : "☰"}</button>
             <button type="button" class="tiny route-btn-black" data-url-suggest="${dayIndex}:${sourceIndex}">MAPから</button>
           </div>
           <div class="route-history-dropdown ${state.activeHistoryDropdownIndex === key ? "" : "hidden"}">
@@ -2149,7 +2396,6 @@ function buildRouteListHtmlForDay(dayIndex) {
             : `<button type="button" class="ghost tiny route-segment-disabled-btn" data-open-segment-disabled data-segment-reason="${reason}" disabled>G Map</button>
                <button type="button" class="ghost tiny route-segment-disabled-btn" data-open-segment-yahoo-disabled data-segment-reason="${reason}" disabled>Y Nav</button>`
         }
-        <span class="route-segment-time">${getDriveTimeLabel(from, to)}</span>
         <select class="tiny route-segment-time-select ${canOpen ? "" : "route-segment-time-disabled"}" data-segment-time-select="${dayIndex}:${segmentVisualIndex}" ${canOpen ? "" : "disabled"}>
           ${optionsHtml}
         </select>
@@ -2191,6 +2437,7 @@ function renderRouteList() {
   els.routeList.classList.remove("muted");
   els.routeList.innerHTML = `<ul class="route-items" data-day-dropzone="${dayIndex}">${routeItemsHtml}</ul>`;
   setActiveDay(state.activeDayIndex);
+  syncPlaceInlineEditorButtons();
   saveTransportState();
 }
 
@@ -2386,56 +2633,18 @@ els.hotelResults.addEventListener("click", (e) => {
     return;
   }
 
-  const searchBtn = e.target.closest("button[data-search-hotel-name]");
-  if (searchBtn) {
-    const hotelId = searchBtn.dataset.searchHotelName;
-    const hotel = state.hotels.find((item) => item.id === hotelId);
-    const name = (hotel?.name || "").trim();
-    if (!name) {
-      setStatus("Google検索候補を取るには、先に宿名を入力してください。", true);
-      return;
+  const applyGoalCandidateBtn = e.target.closest("button[data-apply-destination-name-candidate]");
+  if (applyGoalCandidateBtn) {
+    const name = decodeURIComponent(applyGoalCandidateBtn.dataset.applyDestinationNameCandidate || "");
+    if (!name) return;
+    if (els.destinationInput) {
+      els.destinationInput.value = name;
     }
-    setStatus("Google検索候補を取得中です...");
-    fetchGoogleSuggestions(name)
-      .then((candidates) => {
-        state.hotels = state.hotels.map((item) =>
-          item.id === hotelId ? { ...item, candidates: Array.isArray(candidates) ? candidates : [] } : item,
-        );
-        renderHotelResults();
-        setStatus(
-          candidates.length
-            ? "Google検索候補を取得しました。候補を押すと宿名を置換できます。"
-            : "Google検索候補が見つかりませんでした。",
-          !candidates.length,
-        );
-      })
-      .catch(() => {
-        setStatus("Google検索候補の取得に失敗しました。時間を置いて再試行してください。", true);
-      });
+    syncDestinationFromInput(name);
+    state.destinationNameCandidates = [];
+    renderDestinationNameCandidates();
+    setStatus(`GOALを「${name}」に設定しました。`);
     return;
-  }
-
-  const closeBtn = e.target.closest("button[data-close-hotel-candidates]");
-  if (closeBtn) {
-    const hotelId = closeBtn.dataset.closeHotelCandidates;
-    state.hotels = state.hotels.map((item) => (item.id === hotelId ? { ...item, candidates: [] } : item));
-    renderHotelResults();
-    setStatus("Google検索候補を閉じました。");
-    return;
-  }
-
-  const applyBtn = e.target.closest("button[data-apply-hotel-candidate]");
-  if (applyBtn) {
-    const hotelId = applyBtn.dataset.applyHotelCandidate;
-    const candidate = decodeURIComponent(applyBtn.dataset.candidateName || "");
-    if (!candidate) return;
-    updateHotelNameById(hotelId, candidate, { silent: true });
-    state.hotels = state.hotels.map((item) =>
-      item.id === hotelId ? { ...item, name: candidate, candidates: [] } : item,
-    );
-    renderHotelResults();
-    renderSelectedHotel();
-    setStatus(`候補名「${candidate}」で宿名を置き換えました。`);
   }
 });
 
@@ -2603,6 +2812,8 @@ document.addEventListener("click", (e) => {
     const nextOpen = body.classList.contains("hidden");
     body.classList.toggle("hidden", !nextOpen);
     sectionToggleBtn.textContent = nextOpen ? "▼" : "▶";
+    sectionToggleBtn.classList.toggle("is-open", nextOpen);
+    sectionToggleBtn.setAttribute("aria-expanded", nextOpen ? "true" : "false");
     return;
   }
 
@@ -2707,7 +2918,7 @@ if (els.destinationHistoryBtn) {
 
 if (els.hotelUrlHistoryEditBtn) {
   els.hotelUrlHistoryEditBtn.addEventListener("click", () => {
-    openHistoryEditor("hotelUrl");
+    openHistoryEditor("hotelUrl", els.hotelUrlHistoryEditBtn, "hotel-url");
   });
 }
 
@@ -2718,7 +2929,7 @@ els.originHistoryEditBtn.addEventListener("click", () => {
 
 if (els.destinationHistoryEditBtn) {
   els.destinationHistoryEditBtn.addEventListener("click", () => {
-    openHistoryEditor("place");
+    openHistoryEditor("place", els.destinationHistoryEditBtn, "destination");
   });
 }
 
@@ -2810,7 +3021,7 @@ if (els.originInlineHistoryList) {
     if (fromIdx === toIdx) return;
     const [picked] = state.originHistory.splice(fromIdx, 1);
     state.originHistory.splice(toIdx, 0, picked);
-    saveJson("ntt-origin-history", state.originHistory);
+    saveJson("ntt-place-history", state.originHistory);
     renderOriginHistory();
     renderOriginInlineEditor();
   });
@@ -2878,7 +3089,7 @@ if (els.originInlineDeleteSelected) {
       }
     }
     state.originHistory = state.originHistory.filter((name) => !selected.has(name));
-    saveJson("ntt-origin-history", state.originHistory);
+    saveJson("ntt-place-history", state.originHistory);
     state.originInlineChecks = {};
     renderOriginHistory();
     renderOriginInlineEditor();
@@ -2977,6 +3188,50 @@ if (els.destinationUrlCandidates) {
   });
 }
 
+if (els.destinationNameSuggestBtn) {
+  els.destinationNameSuggestBtn.addEventListener("click", () => {
+    const existing = Array.isArray(state.destinationNameCandidates) ? state.destinationNameCandidates : [];
+    if (existing.length) {
+      state.destinationNameCandidates = [];
+      renderDestinationNameCandidates();
+      setStatus("名称候補を閉じました。");
+      return;
+    }
+    const query = (els.destinationInput?.value || "").trim();
+    if (!query) {
+      setStatus("名称候補を取るには、先にGOAL名を入力してください。", true);
+      return;
+    }
+    setStatus("名称候補を取得中です...");
+    fetchGoogleSuggestions(query)
+      .then((candidates) => {
+        state.destinationNameCandidates = Array.isArray(candidates) ? candidates : [];
+        renderDestinationNameCandidates();
+        setStatus(
+          state.destinationNameCandidates.length
+            ? "名称候補を取得しました。候補を押すとGOAL名を置換できます。"
+            : "名称候補が見つかりませんでした。",
+          !state.destinationNameCandidates.length,
+        );
+      })
+      .catch(() => {
+        setStatus("名称候補の取得に失敗しました。時間を置いて再試行してください。", true);
+      });
+  });
+}
+
+if (els.destinationGoogleSearchBtn) {
+  els.destinationGoogleSearchBtn.addEventListener("click", () => {
+    const query = (els.destinationInput?.value || "").trim();
+    if (!query) {
+      setStatus("検索するGOAL名を入力してください。", true);
+      return;
+    }
+    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+    window.open(searchUrl, "_blank", "noopener,noreferrer");
+  });
+}
+
 document.addEventListener("click", (e) => {
   const originHistoryBtn = e.target.closest("button[data-day-role='origin-history-btn']");
   if (originHistoryBtn && !originHistoryBtn.id) {
@@ -3071,13 +3326,13 @@ document.addEventListener("click", (e) => {
   closeAllDayHistoryDropdowns();
 });
 
-if (els.destinationInput) {
-  els.destinationInput.addEventListener("change", () => {
-    syncDestinationFromInput(els.destinationInput.value);
-  });
-}
-
 document.addEventListener("input", (e) => {
+  const destinationInput = e.target.closest("input[data-day-role='destination-input']");
+  if (!destinationInput) return;
+  updateDestinationByInputElement(destinationInput, { render: false, saveHistory: false });
+});
+
+document.addEventListener("change", (e) => {
   const destinationInput = e.target.closest("input[data-day-role='destination-input']");
   if (!destinationInput) return;
   const card = destinationInput.closest(".card");
@@ -3085,7 +3340,7 @@ document.addEventListener("input", (e) => {
   if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
     setActiveDay(dayIndex);
   }
-  syncDestinationFromInput(destinationInput.value, { saveHistory: false });
+  updateDestinationByInputElement(destinationInput, { render: true, saveHistory: true });
 });
 
 if (els.exportAllDaysBtn) {
@@ -3240,7 +3495,8 @@ els.routeList.addEventListener("click", (e) => {
 
   const editHistoryBtn = e.target.closest("button[data-edit-history]");
   if (editHistoryBtn) {
-    openHistoryEditor("place");
+    const key = editHistoryBtn.dataset.editHistory || "";
+    openHistoryEditor("place", editHistoryBtn, `waypoint:${key}`);
     return;
   }
 
@@ -3620,10 +3876,40 @@ els.historyEditorModal.addEventListener("click", (e) => {
 
 els.historyEditorList.addEventListener("change", (e) => {
   const checkbox = e.target.closest("input[data-history-check]");
-  if (!checkbox) return;
-  const key = decodeURIComponent(checkbox.dataset.historyCheck || "");
-  state.historyEditorChecks[key] = checkbox.checked;
+  if (checkbox) {
+    const key = decodeURIComponent(checkbox.dataset.historyCheck || "");
+    state.historyEditorChecks[key] = checkbox.checked;
+    return;
+  }
+  const input = e.target.closest("input[data-history-name-edit]");
+  if (!input) return;
+  if (state.historyEditorTarget !== "place" && state.historyEditorTarget !== "origin") return;
+  const prev = decodeURIComponent(input.dataset.historyNameEdit || "");
+  const ok = renamePlaceHistoryEntry(prev, input.value);
+  if (!ok) {
+    renderHistoryEditorList();
+    return;
+  }
+  setStatus("履歴名を更新しました。");
+  renderHistoryEditorList();
 });
+
+els.historyEditorList.addEventListener(
+  "blur",
+  (e) => {
+    const input = e.target.closest("input[data-history-name-edit]");
+    if (!input) return;
+    if (state.historyEditorTarget !== "place" && state.historyEditorTarget !== "origin") return;
+    const prev = decodeURIComponent(input.dataset.historyNameEdit || "");
+    const ok = renamePlaceHistoryEntry(prev, input.value);
+    if (!ok) {
+      renderHistoryEditorList();
+      return;
+    }
+    renderHistoryEditorList();
+  },
+  true,
+);
 
 els.historySelectAll.addEventListener("click", () => {
   const list = getHistoryByTarget(state.historyEditorTarget);
@@ -3752,6 +4038,7 @@ function init() {
   normalizeAllDays();
   sortDaysByCompletionAndOrder();
   ensureDayCardsMatchStateDays();
+  refreshOriginInputPlaceholders();
   if (els.defaultOriginInput) {
     els.defaultOriginInput.value = state.defaultOrigin;
   }
@@ -3785,6 +4072,7 @@ function init() {
   renumberDaySectionTitles();
   refreshAllDayHistoryDropdownCaches();
   setupDayAccordionDefaults();
+  syncPlaceInlineEditorButtons();
   setStatus("");
 }
 

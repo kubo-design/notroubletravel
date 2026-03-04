@@ -35,7 +35,7 @@
             <button type="button" class="ghost tiny" data-open-day-full-route>GoogleMap</button>
             <button type="button" class="ghost tiny" data-open-day-full-route-yahoo>Yahooナビ</button>
             <select class="tiny" data-day-role="day-header-time-select" aria-label="予測時間">
-              <option value="">予測</option>
+              <option value="">予測時間</option>
             </select>
           </div>
           <div class="input-tools day-actions">
@@ -52,7 +52,7 @@
                 <button type="button" class="ghost tiny icon-btn" data-section-toggle aria-label="出発地開閉" title="出発地開閉">▶</button>
                 <h3>START</h3>
               </div>
-              <input type="text" id="origin" list="origin-history" placeholder="デフォルトで設定した出発地名" required />
+              <input type="text" id="origin" list="origin-history" placeholder="出発地" required />
             </div>
           </div>
           <div class="section-body hidden">
@@ -99,22 +99,26 @@
                 <button type="button" class="ghost tiny icon-btn" data-section-toggle aria-label="目的地開閉" title="目的地開閉">▶</button>
                 <h3>GOAL</h3>
               </div>
-              <input type="text" id="destination-input" data-day-role="destination-input" placeholder="GOALに設定された場所名" />
+              <input type="text" id="destination-input" data-day-role="destination-input" placeholder="目的地" />
             </div>
           </div>
           <div class="section-body hidden">
-            <form id="hotel-register-form" class="goal-action-row">
+            <div class="goal-action-row">
               <button type="button" id="destination-history-btn" data-day-role="destination-history-btn">履歴から</button>
               <button type="button" id="destination-history-edit-btn" data-day-role="destination-history-edit-btn" class="origin-edit-btn" aria-label="履歴編集">☰</button>
               <button type="button" id="destination-url-suggest-btn" class="ghost">MAPから</button>
-              <input type="url" id="hotelUrl" data-day-role="hotel-url-input" placeholder="宿泊地 URL" required />
-              <button type="submit" class="goal-register-btn">登録</button>
-            </form>
+            </div>
             <div id="destination-map-url-wrap" class="goal-action-row hidden">
               <input type="url" id="destination-map-url-input" placeholder="GoogleMap URLを貼り付け" />
               <button type="button" id="destination-map-url-apply" class="goal-register-btn">候補表示</button>
             </div>
+            <div id="destination-inline-history-editor" class="origin-inline-editor hidden"></div>
             <div id="destination-history-dropdown" data-day-role="destination-history-dropdown" class="route-history-dropdown hidden"></div>
+            <div class="goal-search-row">
+              <button type="button" id="destination-name-suggest-btn" class="tiny route-btn-green">名称候補</button>
+              <button type="button" id="destination-google-search-btn" class="tiny route-btn-black">Google検索</button>
+            </div>
+            <div id="destination-name-candidates" class="route-candidates hidden"></div>
             <div id="destination-url-candidates" class="route-candidates hidden"></div>
 
             <div class="hotel-select-head">
@@ -124,6 +128,10 @@
                 <option value="price-desc">料金が高い順</option>
               </select>
             </div>
+            <form id="hotel-register-form" class="hotel-register-row">
+              <input type="url" id="hotelUrl" data-day-role="hotel-url-input" placeholder="宿泊地 URL" required />
+              <button type="submit" class="goal-register-btn">登録</button>
+            </form>
             <div id="hotel-results" data-day-role="hotel-results" class="hotel-choice-list"></div>
           </div>
         </div>

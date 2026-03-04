@@ -241,6 +241,14 @@ h3 {
   align-items: center;
 }
 
+.goal-search-row {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
 .goal-action-row .origin-edit-btn {
   min-width: 56px;
 }
@@ -409,7 +417,7 @@ button {
 input,
 select {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 3px;
   padding: 9px 10px;
   background: #fff;
   min-height: 44px;
@@ -417,7 +425,7 @@ select {
 
 button {
   border: none;
-  border-radius: 10px;
+  border-radius: 3px;
   padding: 10px 12px;
   background: var(--accent);
   color: #fff;
@@ -456,6 +464,14 @@ button.ghost {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.hotel-register-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
 }
 
 .hotel-select-head h4 {
@@ -722,7 +738,7 @@ td {
 }
 
 .route-segment-time-select {
-  min-width: 96px;
+  min-width: 116px;
 }
 
 .route-segment-only button {
@@ -825,6 +841,14 @@ td {
 .route-toggle-btn,
 .route-head-icon {
   min-width: 40px;
+}
+
+button[data-section-toggle].is-open,
+.day-accordion-toggle[aria-expanded="true"],
+.route-toggle-btn[aria-expanded="true"] {
+  background: #111;
+  color: #fff;
+  border-color: #111;
 }
 
 .route-waypoint-body {
@@ -980,6 +1004,64 @@ td {
   z-index: 50;
 }
 
+#history-editor-modal.inline-history-accordion {
+  position: static;
+  inset: auto;
+  background: transparent;
+  display: block;
+  justify-content: stretch;
+  align-items: stretch;
+  padding: 0;
+  width: 100%;
+  z-index: auto;
+}
+
+#history-editor-modal.inline-history-accordion .history-modal-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: none;
+  box-shadow: none;
+  border-radius: 10px;
+  margin-top: 10px;
+  border-top: none;
+  padding-top: 12px;
+}
+
+#history-editor-modal.inline-history-accordion .history-modal-head {
+  display: none;
+}
+
+#history-editor-modal.inline-history-accordion .history-modal-actions {
+  order: 3;
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+#history-editor-modal.inline-history-accordion .history-modal-actions button {
+  border-radius: 0;
+  border: 2px solid #111;
+  min-height: 38px;
+}
+
+#history-editor-modal.inline-history-accordion #history-select-all {
+  background: #fff;
+  color: #111;
+}
+
+#history-editor-modal.inline-history-accordion #history-delete-selected {
+  background: #111;
+  color: #fff;
+}
+
+#history-editor-modal.inline-history-accordion .history-editor-list {
+  order: 2;
+  border-top: none;
+  padding-top: 0;
+}
+
 .history-modal.hidden {
   display: none;
 }
@@ -1013,9 +1095,11 @@ td {
 }
 
 .history-editor-list {
-  margin-top: 10px;
+  margin-top: 14px;
   display: grid;
   gap: 8px;
+  border-top: 1px solid #1e2f3d;
+  padding-top: 12px;
 }
 
 .history-item {
@@ -1025,6 +1109,23 @@ td {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px;
+}
+
+.history-item-editable {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.history-item-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.history-origin-item {
+  border: none;
+  border-radius: 0;
+  padding: 6px 0;
 }
 
 @media (max-width: 900px) {
