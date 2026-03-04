@@ -1705,6 +1705,7 @@ function updateDestinationByInputElement(inputEl, options = {}) {
       }
     }
   }
+  renderRouteListIntoDayCard(dayIndex);
   if (dayIndex === state.activeDayIndex) {
     if (render) {
       renderRouteList();
@@ -3238,6 +3239,7 @@ function updateOriginByInputElement(inputEl) {
   const dayIndex = Number.isInteger(dayIndexRaw) ? dayIndexRaw : state.activeDayIndex;
   if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
   state.transportDays[dayIndex].origin = inputEl.value.trim();
+  renderRouteListIntoDayCard(dayIndex);
   if (dayIndex === state.activeDayIndex) {
     renderRouteList();
     renderTransportDetail();
@@ -4329,6 +4331,51 @@ if (els.exportChoiceLine) {
     setStatus(mode === "shared" ? "LINE共有を開きました。" : "LINE送信用画面を開きました。");
   });
 }
+
+document.addEventListener("click", (e) => {
+  const routeListHost = e.target.closest("[data-day-role='route-list']");
+  if (!routeListHost || routeListHost === els.routeList) return;
+
+  const disabledSegmentBtn = e.target.closest("button[data-open-segment-disabled], button[data-open-segment-yahoo-disabled]");
+  if (disabledSegmentBtn) {
+    const reason = disabledSegmentBtn.dataset.segmentReason || "区間ルートを生成できません。";
+    setStatus(reason, true);
+    return;
+  }
+
+  const addWaypointAtBtn = e.target.closest("button[data-add-waypoint-at]");
+  if (addWaypointAtBtn) {
+    const { dayIndex, pointIndex } = parseDayAndIndex(addWaypointAtBtn.dataset.addWaypointAt);
+    handleAddRoutePoint(dayIndex, pointIndex);
+    return;
+  }
+
+  const segmentBtn = e.target.closest("button[data-open-segment], button[data-open-segment-from]");
+  if (segmentBtn) {
+    const from = decodeURIComponent(segmentBtn.dataset.openSegmentFrom || "");
+    const to = decodeURIComponent(segmentBtn.dataset.openSegmentTo || "");
+    if (!from || !to) {
+      setStatus("区間ルートを生成できませんでした。", true);
+      return;
+    }
+    const mapsUrl = `https://www.google.com/maps/dir/${encodeURIComponent(from)}/${encodeURIComponent(to)}`;
+    openGoogleMap(mapsUrl);
+    setStatus(`区間「${from} → ${to}」のGoogleMapを表示しました。`);
+    return;
+  }
+
+  const segmentYahooBtn = e.target.closest("button[data-open-segment-yahoo], button[data-open-segment-yahoo-from]");
+  if (segmentYahooBtn) {
+    const from = decodeURIComponent(segmentYahooBtn.dataset.openSegmentYahooFrom || "");
+    const to = decodeURIComponent(segmentYahooBtn.dataset.openSegmentYahooTo || "");
+    if (!from || !to) {
+      setStatus("区間ルートを生成できませんでした。", true);
+      return;
+    }
+    openYahooCarNaviRoute(from, to);
+    setStatus(`区間「${from} → ${to}」をYahooナビで表示します。`);
+  }
+});
 
 els.routeList.addEventListener("click", (e) => {
   const disabledSegmentBtn = e.target.closest("button[data-open-segment-disabled], button[data-open-segment-yahoo-disabled]");
