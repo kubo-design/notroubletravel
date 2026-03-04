@@ -3346,18 +3346,32 @@ document.addEventListener("click", (e) => {
 
   if (target === "destination") {
     const destinationInput = card.querySelector("input[data-day-role='destination-input']");
-    if (destinationInput) destinationInput.value = value;
-    setActiveDay(dayIndex);
-    const hotel = ensureHotelInListFromHistoryName(value);
-    if (hotel) {
-      state.selectedHotel = hotel;
-      syncDestinationWithHotel(hotel);
-      renderHotelResults();
-      renderSelectedHotel();
+    if (destinationInput) {
+      destinationInput.value = value;
+      updateDestinationByInputElement(destinationInput, { render: false, saveHistory: false });
     } else {
-      syncDestinationFromInput(value, { saveHistory: false });
+      const day = state.transportDays[dayIndex];
+      if (day) {
+        normalizePlanPoints(day);
+        const destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+        if (destinationIndex >= 0) {
+          const current = ensurePointObject(day.points[destinationIndex]);
+          day.points[destinationIndex] = { ...current, name: value.trim(), isDestination: true };
+        } else {
+          day.points.push({ name: value.trim(), url: "", candidates: [], isDestination: true, expanded: false });
+          normalizePlanPoints(day);
+        }
+      }
+    }
+    if (dayIndex === state.activeDayIndex) {
+      renderRouteList();
+      renderTransportDetail();
+    } else {
+      syncDayCardInputsFromState(dayIndex);
+      renderRouteListIntoDayCard(dayIndex);
     }
     closeAllDayHistoryDropdowns();
+    saveTransportState();
     setStatus("目的地の履歴を適用しました。");
     return;
   }
