@@ -3334,7 +3334,11 @@ document.addEventListener("click", (e) => {
     if (dayIndex === state.activeDayIndex) {
       renderRouteList();
       renderTransportDetail();
+    } else {
+      syncDayCardInputsFromState(dayIndex);
+      renderRouteListIntoDayCard(dayIndex);
     }
+    saveTransportState();
     setStatus("出発地の履歴を適用しました。");
     return;
   }
