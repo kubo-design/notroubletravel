@@ -1751,12 +1751,20 @@ function setActiveDay(dayIndex) {
   if (!Number.isInteger(dayIndex)) return;
   if (dayIndex < 0 || dayIndex >= state.transportDays.length) return;
   state.activeDayIndex = dayIndex;
-  els.originInput.value = state.transportPlan.origin || "";
-  if (els.destinationInput) {
-    const destinationPoint = (state.transportPlan.points || [])
-      .map(ensurePointObject)
-      .find((point) => point.isDestination);
-    els.destinationInput.value = destinationPoint?.name || "";
+  const cards = ensureDayCardAccordionStructure();
+  const card = cards[dayIndex];
+  if (card) {
+    const originInput = card.querySelector("input[data-day-role='origin-input']");
+    if (originInput) {
+      originInput.value = state.transportPlan.origin || "";
+    }
+    const destinationInput = card.querySelector("input[data-day-role='destination-input']");
+    if (destinationInput) {
+      const destinationPoint = (state.transportPlan.points || [])
+        .map(ensurePointObject)
+        .find((point) => point.isDestination);
+      destinationInput.value = destinationPoint?.name || "";
+    }
   }
   saveTransportState();
 }
@@ -3795,8 +3803,29 @@ els.routeList.addEventListener("change", (e) => {
   }
 
   const nameInput = e.target.closest("input[data-point-input]");
+  if (nameInput) {
+    const { dayIndex } = parseDayAndIndex(nameInput.dataset.pointInput);
+    setActiveDay(dayIndex);
+    savePlaceHistory(nameInput.value);
+    renderRouteList();
+    renderTransportDetail();
+    return;
+  }
+});
+
+els.routeList.addEventListener("compositionend", (e) => {
+  const nameInput = e.target.closest("input[data-point-input]");
   if (!nameInput) return;
-  savePlaceHistory(nameInput.value);
+  const { dayIndex, pointIndex } = parseDayAndIndex(nameInput.dataset.pointInput);
+  setActiveDay(dayIndex);
+  if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= state.transportPlan.points.length) return;
+  const current = ensurePointObject(state.transportPlan.points[pointIndex]);
+  state.transportPlan.points[pointIndex] = { ...current, name: nameInput.value };
+  normalizeRoutePoints();
+  const key = nameInput.dataset.pointInput;
+  const selStart = nameInput.selectionStart;
+  const selEnd = nameInput.selectionEnd;
+  rerenderRouteListKeepingPointFocus(key, selStart, selEnd);
 });
 
 els.routeList.addEventListener("dragstart", (e) => {
