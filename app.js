@@ -546,6 +546,13 @@ function getHistoryByTarget(target) {
   return state.placeHistory;
 }
 
+function getPlaceHistoryWithStart() {
+  const merged = [(state.defaultOrigin || "").trim(), ...(state.placeHistory || [])]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  return [...new Set(merged)];
+}
+
 function setHistoryByTarget(target, list) {
   if (target === "origin") {
     state.placeHistory = list;
@@ -994,12 +1001,8 @@ function normalizeStoredHistories() {
 
 function renderTopHistoryDropdown(target) {
   let list = getHistoryByTarget(target);
-  if (target === "origin") {
-    const defaultName = (state.defaultOrigin || "").trim();
-    const merged = [defaultName, ...(Array.isArray(list) ? list : [])]
-      .map((item) => String(item || "").trim())
-      .filter(Boolean);
-    list = [...new Set(merged)];
+  if (target === "origin" || target === "destination") {
+    list = getPlaceHistoryWithStart();
   }
   const dropdown =
     target === "origin"
@@ -1031,12 +1034,8 @@ function renderTopHistoryDropdown(target) {
 function renderTopHistoryDropdownForElement(target, dropdown) {
   if (!dropdown) return;
   let list = getHistoryByTarget(target);
-  if (target === "origin") {
-    const defaultName = (state.defaultOrigin || "").trim();
-    const merged = [defaultName, ...(Array.isArray(list) ? list : [])]
-      .map((item) => String(item || "").trim())
-      .filter(Boolean);
-    list = [...new Set(merged)];
+  if (target === "origin" || target === "destination") {
+    list = getPlaceHistoryWithStart();
   }
   if (!list.length) {
     dropdown.innerHTML = "<span class='muted'>履歴がありません</span>";
@@ -2355,8 +2354,8 @@ function buildRouteListHtmlForDay(dayIndex) {
           </div>
           <div class="route-history-dropdown ${state.activeHistoryDropdownIndex === key ? "" : "hidden"}">
             ${
-              state.placeHistory.length
-                ? state.placeHistory
+              getPlaceHistoryWithStart().length
+                ? getPlaceHistoryWithStart()
                     .slice(0, 12)
                     .map((historyName) => `<button type="button" class="ghost tiny" data-use-history="${key}" data-history-name="${encodeURIComponent(historyName)}">${historyName}</button>`)
                     .join("")
