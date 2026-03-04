@@ -92,6 +92,7 @@ const state = {
   lastUndoPushAt: 0,
   undoTypingSessionKey: "",
   isApplyingUndo: false,
+  lastHotelRegister: { url: "", at: 0 },
 };
 
 Object.defineProperty(state, "originHistory", {
@@ -569,10 +570,8 @@ function openYahooCarNaviRoute(from, to) {
 }
 
 function openMapPicker(url = "https://www.google.com/maps") {
-  const popup = window.open(url, "_blank", "noopener,noreferrer");
-  if (popup) return true;
-  setStatus("地図を新しいタブで開けませんでした。ブラウザ設定を確認してください。", true);
-  return false;
+  openExternalUrl(url);
+  return true;
 }
 
 function openExternalUrl(url) {
@@ -1691,11 +1690,26 @@ function syncDestinationFromInput(destinationName, options = {}) {
   const destinationIndex = state.transportPlan.points.findIndex((p) => ensurePointObject(p).isDestination);
   if (!normalized) {
     if (destinationIndex >= 0) {
-      state.transportPlan.points.splice(destinationIndex, 1);
-      normalizeRoutePoints();
-      renderRouteList();
-      renderTransportDetail();
+      const current = ensurePointObject(state.transportPlan.points[destinationIndex]);
+      state.transportPlan.points[destinationIndex] = {
+        ...current,
+        name: "",
+        isDestination: true,
+      };
+    } else {
+      state.transportPlan.points.push({
+        name: "",
+        url: "",
+        note: "",
+        noteExpanded: false,
+        candidates: [],
+        expanded: false,
+        isDestination: true,
+      });
     }
+    normalizeRoutePoints();
+    renderRouteList();
+    renderTransportDetail();
     return;
   }
 
@@ -1742,9 +1756,24 @@ function updateDestinationByInputElement(inputEl, options = {}) {
     destinationIndex >= 0 ? (ensurePointObject(day.points[destinationIndex]).name || "").trim() : "";
   if (!normalized) {
     if (destinationIndex >= 0) {
-      day.points.splice(destinationIndex, 1);
-      normalizePlanPoints(day);
+      const current = ensurePointObject(day.points[destinationIndex]);
+      day.points[destinationIndex] = {
+        ...current,
+        name: "",
+        isDestination: true,
+      };
+    } else {
+      day.points.push({
+        name: "",
+        url: "",
+        note: "",
+        noteExpanded: false,
+        candidates: [],
+        isDestination: true,
+        expanded: false,
+      });
     }
+    normalizePlanPoints(day);
   } else if (destinationIndex >= 0) {
     const current = ensurePointObject(day.points[destinationIndex]);
     day.points[destinationIndex] = { ...current, name: normalized, isDestination: true };
@@ -2189,6 +2218,11 @@ function ensureDayCardAccordionStructure() {
     }
     dayCompleteCheck.dataset.dayComplete = String(index);
     dayCompleteCheck.checked = Boolean(dayData.completed);
+    dayCompleteCheck.onchange = () => {
+      const card = dayCompleteCheck.closest(".card");
+      const idx = card ? Number(card.dataset.dayCardIndex) : NaN;
+      applyDayCompleteState(idx, dayCompleteCheck.checked);
+    };
 
     let tools = head.querySelector(".input-tools");
     if (!tools) {
@@ -2829,6 +2863,16 @@ function sortDaysByCompletionAndOrder() {
   saveTransportState();
 }
 
+function applyDayCompleteState(dayIndex, isChecked) {
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+  state.transportDays[dayIndex].completed = Boolean(isChecked);
+  if (isChecked) {
+    state.transportDays[dayIndex].expanded = false;
+  }
+  sortDaysByCompletionAndOrder();
+  setStatus(isChecked ? "DAYを完了にしました。" : "DAYの完了を解除しました。");
+}
+
 function buildRouteListHtmlForDay(dayIndex) {
   const day = state.transportDays[dayIndex];
   if (!day) return "<li class='route-origin'>経由地または目的地を追加してください。</li>";
@@ -3051,36 +3095,62 @@ function renderHistory() {
 
 function handleHotelRegisterSubmit(formEl) {
   if (!formEl) return;
+  const card = formEl.closest(".card");
+  const dayIndex = Number(card?.dataset.dayCardIndex);
+  if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+    setActiveDay(dayIndex);
+  }
+
   const urlInput =
     formEl.querySelector("input[data-day-role='hotel-url-input']") ||
     formEl.querySelector("#hotelUrl");
   if (!urlInput) return;
 
   const hotelUrl = urlInput.value.trim();
+  const now = Date.now();
+  if (
+    hotelUrl &&
+    state.lastHotelRegister &&
+    state.lastHotelRegister.url === hotelUrl &&
+    now - Number(state.lastHotelRegister.at || 0) < 900
+  ) {
+    return false;
+  }
   const historyEntry = state.hotelUrlHistory.find((entry) => entry.url === hotelUrl);
-  const item = buildHotelFromUrl(hotelUrl, historyEntry?.name || "");
+  const existing = state.hotels.find((hotel) => (hotel.url || "").trim() === hotelUrl);
+  const item = buildHotelFromUrl(hotelUrl, historyEntry?.name || existing?.name || "");
 
   if (!item) {
     setStatus("有効な宿URLを入力してください。", true);
     return false;
   }
 
-  state.hotels.push(item);
-  if (!state.selectedHotel) {
-    state.selectedHotel = item;
-    syncDestinationWithHotel(item);
+  let targetHotel = item;
+  if (existing) {
+    const merged = { ...existing, ...item, id: existing.id };
+    state.hotels = state.hotels.map((hotel) => (hotel.id === existing.id ? merged : hotel));
+    targetHotel = merged;
+  } else {
+    state.hotels.push(item);
   }
+
+  state.selectedHotel = targetHotel;
+  syncDestinationWithHotel(targetHotel);
 
   renderHotelResults();
   renderSelectedHotel();
-  saveHotelUrlHistory(hotelUrl, item.name);
-  savePlaceHistory(item.name);
+  saveHotelUrlHistory(hotelUrl, targetHotel.name);
+  savePlaceHistory(targetHotel.name);
   closeTopHistoryDropdowns();
   closeAllDayHistoryDropdowns();
+  state.lastHotelRegister = { url: hotelUrl, at: now };
   formEl.reset();
 
-  const note = item.priceEstimated ? "料金はURLから取得できなかったため推定値です。" : "";
-  setStatus(`「${item.name} (${item.site})」をURLから自動登録しました。${note}`.trim());
+  const note = targetHotel.priceEstimated ? "料金はURLから取得できなかったため推定値です。" : "";
+  const msg = existing
+    ? `既存の「${targetHotel.name} (${targetHotel.site})」を目的地に設定しました。`
+    : `「${targetHotel.name} (${targetHotel.site})」をURLから自動登録しました。`;
+  setStatus(`${msg}${note}`.trim());
   return true;
 }
 
@@ -3792,14 +3862,7 @@ document.addEventListener("change", async (e) => {
   if (dayCompleteCheck) {
     const card = dayCompleteCheck.closest(".card");
     const dayIndex = card ? Number(card.dataset.dayCardIndex) : NaN;
-    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
-      state.transportDays[dayIndex].completed = dayCompleteCheck.checked;
-      if (dayCompleteCheck.checked) {
-        state.transportDays[dayIndex].expanded = false;
-      }
-      sortDaysByCompletionAndOrder();
-      setStatus(dayCompleteCheck.checked ? "DAYを完了にしました。" : "DAYの完了を解除しました。");
-    }
+    applyDayCompleteState(dayIndex, dayCompleteCheck.checked);
     return;
   }
 
