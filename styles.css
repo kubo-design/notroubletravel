@@ -340,6 +340,11 @@ h3 {
   gap: 6px;
 }
 
+input[data-day-role="origin-input"]::placeholder {
+  color: #111;
+  opacity: 1;
+}
+
 .goal-title h3 {
   margin: 0;
 }

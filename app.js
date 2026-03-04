@@ -91,6 +91,7 @@ const state = {
   lastUndoDaysSignature: "",
   lastUndoPushAt: 0,
   undoTypingSessionKey: "",
+  undoTypingClearTimer: null,
   isApplyingUndo: false,
   lastHotelRegister: { url: "", at: 0 },
 };
@@ -299,18 +300,26 @@ function registerUndoSnapshot() {
     state.lastUndoDaysSignature = daysSignature;
     return;
   }
-  // 連続入力を1操作としてまとめる（1文字ずつ戻るのを防ぐ）
-  if (now - Number(state.lastUndoPushAt || 0) < 800) {
-    state.lastUndoSnapshot = snapshot;
-    state.lastUndoSignature = signature;
-    state.lastUndoDaysSignature = daysSignature;
-    return;
-  }
   pushUndoCheckpoint(state.lastUndoSnapshot);
   state.lastUndoSnapshot = snapshot;
   state.lastUndoSignature = signature;
   state.lastUndoDaysSignature = daysSignature;
   state.lastUndoPushAt = now;
+}
+
+function getUndoFieldKey(field) {
+  if (!field) return "";
+  const card = field.closest(".card");
+  const dayIndex = Number(card?.dataset.dayCardIndex);
+  const dayPart = Number.isInteger(dayIndex) ? `day:${dayIndex}` : "day:-1";
+  const fieldPart =
+    field.dataset.pointNote ||
+    field.dataset.pointInput ||
+    field.dataset.pointUrl ||
+    field.dataset.dayRole ||
+    field.id ||
+    "";
+  return `${dayPart}:${fieldPart}`;
 }
 
 function saveTransportState() {
@@ -1550,8 +1559,10 @@ function sortHotels(list) {
   return sorted;
 }
 
-function isHotelSelectedForActiveDay(hotel) {
-  const points = (state.transportPlan?.points || []).map(ensurePointObject);
+function isHotelSelectedForDay(dayIndex, hotel) {
+  const day = state.transportDays[dayIndex];
+  if (!day) return false;
+  const points = (day.points || []).map(ensurePointObject);
   const destination = points.find((p) => p.isDestination);
   if (!destination) return false;
   if (destination.url && hotel.url) {
@@ -1560,16 +1571,11 @@ function isHotelSelectedForActiveDay(hotel) {
   return destination.name.trim() === hotel.name.trim();
 }
 
-function renderHotelResults() {
-  if (!state.hotels.length) {
-    els.hotelResults.innerHTML = "";
-    return;
-  }
-
+function buildHotelResultsHtml(dayIndex) {
   const sorted = sortHotels(state.hotels);
-  els.hotelResults.innerHTML = sorted
+  return sorted
     .map((h) => {
-      const isSelected = isHotelSelectedForActiveDay(h);
+      const isSelected = isHotelSelectedForDay(dayIndex, h);
       const isExpanded = Boolean(state.hotelExpanded[h.id]);
       const selectedClass = isSelected ? "is-selected" : "is-unselected";
       return `
@@ -1596,6 +1602,23 @@ function renderHotelResults() {
       `;
     })
     .join("");
+}
+
+function renderHotelResults() {
+  const cards = ensureDayCardAccordionStructure();
+  const hosts = cards
+    .map((card, index) => ({ host: card.querySelector("[data-day-role='hotel-results']"), dayIndex: index }))
+    .filter((item) => item.host);
+
+  if (!hosts.length && els.hotelResults) {
+    const fallbackDayIndex = Number.isInteger(state.activeDayIndex) ? state.activeDayIndex : 0;
+    els.hotelResults.innerHTML = state.hotels.length ? buildHotelResultsHtml(fallbackDayIndex) : "";
+    return;
+  }
+
+  hosts.forEach(({ host, dayIndex }) => {
+    host.innerHTML = state.hotels.length ? buildHotelResultsHtml(dayIndex) : "";
+  });
 }
 
 function renderSelectedHotel() {
@@ -4293,6 +4316,42 @@ document.addEventListener("click", (e) => {
     return;
   }
 
+  const originHistoryEditBtn = e.target.closest("button[data-day-role='origin-history-edit-btn']");
+  if (originHistoryEditBtn && !originHistoryEditBtn.id) {
+    e.stopPropagation();
+    const card = originHistoryEditBtn.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+      setActiveDay(dayIndex);
+      openHistoryEditor("origin", originHistoryEditBtn, `origin-day:${dayIndex}`);
+    }
+    return;
+  }
+
+  const destinationHistoryEditBtn = e.target.closest("button[data-day-role='destination-history-edit-btn']");
+  if (destinationHistoryEditBtn && !destinationHistoryEditBtn.id) {
+    e.stopPropagation();
+    const card = destinationHistoryEditBtn.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+      setActiveDay(dayIndex);
+      openHistoryEditor("place", destinationHistoryEditBtn, `destination-day:${dayIndex}`);
+    }
+    return;
+  }
+
+  const hotelUrlHistoryEditBtn = e.target.closest("button[data-day-role='hotel-url-history-edit-btn']");
+  if (hotelUrlHistoryEditBtn && !hotelUrlHistoryEditBtn.id) {
+    e.stopPropagation();
+    const card = hotelUrlHistoryEditBtn.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+      setActiveDay(dayIndex);
+      openHistoryEditor("hotelUrl", hotelUrlHistoryEditBtn, `hotel-url-day:${dayIndex}`);
+    }
+    return;
+  }
+
   const historyUseBtn = e.target.closest("button[data-use-top-history]");
   if (!historyUseBtn) return;
   const dropdown = historyUseBtn.closest("[data-day-role='origin-history-dropdown'], [data-day-role='destination-history-dropdown'], [data-day-role='hotel-url-history-dropdown']");
@@ -4476,25 +4535,15 @@ document.addEventListener("focusin", (e) => {
     "textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note], input[data-day-role='origin-input'], input[data-day-role='destination-input'], input[data-point-input], input[data-point-url]",
   );
   if (!textField) return;
-  const card = textField.closest(".card");
-  const dayIndex = Number(card?.dataset.dayCardIndex);
-  const dayPart = Number.isInteger(dayIndex) ? `day:${dayIndex}` : "day:-1";
-  const fieldPart =
-    textField.dataset.pointNote ||
-    textField.dataset.pointInput ||
-    textField.dataset.pointUrl ||
-    textField.dataset.dayRole ||
-    textField.id ||
-    "";
-  const key = `${dayPart}:${fieldPart}`;
+  if (state.undoTypingClearTimer) {
+    clearTimeout(state.undoTypingClearTimer);
+    state.undoTypingClearTimer = null;
+  }
+  const key = getUndoFieldKey(textField);
   if (!key) return;
   if (state.undoTypingSessionKey === key) return;
   state.undoTypingSessionKey = key;
-  const current = captureTransportUndoSnapshot();
-  state.lastUndoSnapshot = current;
-  state.lastUndoSignature = JSON.stringify(current);
-  state.lastUndoDaysSignature = JSON.stringify(current.transportDays);
-  pushUndoCheckpoint(current);
+  pushUndoCheckpoint(captureTransportUndoSnapshot());
 });
 
 document.addEventListener("focusout", (e) => {
@@ -4502,8 +4551,20 @@ document.addEventListener("focusout", (e) => {
     "textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note], input[data-day-role='origin-input'], input[data-day-role='destination-input'], input[data-point-input], input[data-point-url]",
   );
   if (!textField) return;
-  state.undoTypingSessionKey = "";
-  state.lastUndoPushAt = Date.now();
+  const leavingKey = getUndoFieldKey(textField);
+  if (state.undoTypingClearTimer) {
+    clearTimeout(state.undoTypingClearTimer);
+    state.undoTypingClearTimer = null;
+  }
+  state.undoTypingClearTimer = setTimeout(() => {
+    const active = document.activeElement;
+    const activeKey = getUndoFieldKey(active);
+    if (!activeKey || activeKey !== leavingKey) {
+      state.undoTypingSessionKey = "";
+      state.lastUndoPushAt = Date.now();
+    }
+    state.undoTypingClearTimer = null;
+  }, 120);
 });
 
 if (els.exportAllDaysBtn) {
