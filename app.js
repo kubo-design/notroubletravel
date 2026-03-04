@@ -73,6 +73,7 @@ const state = {
   originInlineChecks: {},
   originInlineDragIndex: null,
   originInlineEditMode: false,
+  originInlineAnchorKey: "",
   historyEditorAnchorKey: "",
   hotelExpanded: {},
   pendingExport: null,
@@ -1050,14 +1051,44 @@ function openMapAndShowUrlInput(target) {
 
 function setOriginInlineEditMode(enabled) {
   state.originInlineEditMode = Boolean(enabled);
-  if (!els.originHistoryEditBtn || !els.defaultOriginInput || !els.saveDefaultOriginBtn) return;
-  els.originHistoryEditBtn.textContent = state.originInlineEditMode ? "✕" : "☰";
-  els.originHistoryEditBtn.classList.toggle("origin-edit-active", state.originInlineEditMode);
+  if (!els.defaultOriginInput || !els.saveDefaultOriginBtn) return;
   els.defaultOriginInput.readOnly = !state.originInlineEditMode;
   if (!state.originInlineEditMode) {
     els.defaultOriginInput.value = state.defaultOrigin || "";
   }
   els.saveDefaultOriginBtn.textContent = "DEFAULT";
+}
+
+function syncOriginInlineEditorButtons() {
+  const isOpen = els.originInlineEditor && !els.originInlineEditor.classList.contains("hidden");
+  document.querySelectorAll("button[data-day-role='origin-history-edit-btn']").forEach((btn) => {
+    const card = btn.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    const key = Number.isInteger(dayIndex) ? `origin-day:${dayIndex}` : "";
+    const active = Boolean(isOpen && key && state.originInlineAnchorKey === key);
+    btn.textContent = active ? "✕" : "☰";
+    btn.classList.toggle("origin-edit-active", active);
+  });
+}
+
+function openOriginInlineEditorAt(anchorEl, anchorKey = "") {
+  if (!anchorEl || !els.originInlineEditor) return;
+  const nextKey = anchorKey || "origin-inline";
+  const isOpen = !els.originInlineEditor.classList.contains("hidden");
+  if (isOpen && state.originInlineAnchorKey === nextKey) {
+    setOriginInlineEditorOpen(false);
+    return;
+  }
+  const hostRow = anchorEl.closest(".origin-action-row, .route-history-tools, .goal-action-row");
+  const host = hostRow ? hostRow.parentElement : anchorEl.closest(".section-body, .route-waypoint-body");
+  if (hostRow && host) {
+    hostRow.insertAdjacentElement("afterend", els.originInlineEditor);
+  } else if (host) {
+    host.prepend(els.originInlineEditor);
+  }
+  state.originInlineAnchorKey = nextKey;
+  setOriginInlineEditorOpen(true);
+  syncOriginInlineEditorButtons();
 }
 
 function renderOriginInlineEditor() {
@@ -1149,7 +1180,10 @@ function setOriginInlineEditorOpen(isOpen) {
   if (isOpen) {
     state.originInlineChecks = {};
     renderOriginInlineEditor();
+  } else {
+    state.originInlineAnchorKey = "";
   }
+  syncOriginInlineEditorButtons();
 }
 
 function applyDefaultOriginFromInput(value) {
@@ -3148,15 +3182,6 @@ function handleHotelRegisterSubmit(formEl) {
   if (hotelUrl && hotelUrl !== hotelUrlRaw) {
     urlInput.value = hotelUrl;
   }
-  const now = Date.now();
-  if (
-    hotelUrl &&
-    state.lastHotelRegister &&
-    state.lastHotelRegister.url === hotelUrl &&
-    now - Number(state.lastHotelRegister.at || 0) < 900
-  ) {
-    return false;
-  }
   const historyEntry = state.hotelUrlHistory.find((entry) => normalizeUrlValue(entry.url) === hotelUrl);
   const existing = state.hotels.find((hotel) => normalizeUrlValue(hotel.url) === hotelUrl);
   const item = buildHotelFromUrl(hotelUrl, historyEntry?.name || existing?.name || "");
@@ -3188,7 +3213,6 @@ function handleHotelRegisterSubmit(formEl) {
   savePlaceHistory(targetHotel.name);
   closeTopHistoryDropdowns();
   closeAllDayHistoryDropdowns();
-  state.lastHotelRegister = { url: hotelUrl, at: now };
   formEl.reset();
 
   const note = targetHotel.priceEstimated ? "料金はURLから取得できなかったため推定値です。" : "";
@@ -3971,8 +3995,10 @@ if (els.hotelUrlHistoryEditBtn) {
 }
 
 els.originHistoryEditBtn.addEventListener("click", () => {
-  const isHidden = els.originInlineEditor?.classList.contains("hidden");
-  setOriginInlineEditorOpen(Boolean(isHidden));
+  const card = els.originHistoryEditBtn.closest(".card");
+  const dayIndex = Number(card?.dataset.dayCardIndex);
+  const key = Number.isInteger(dayIndex) ? `origin-day:${dayIndex}` : "origin-day:0";
+  openOriginInlineEditorAt(els.originHistoryEditBtn, key);
 });
 
 if (els.destinationHistoryEditBtn) {
@@ -4323,7 +4349,7 @@ document.addEventListener("click", (e) => {
     const dayIndex = Number(card?.dataset.dayCardIndex);
     if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
       setActiveDay(dayIndex);
-      openHistoryEditor("origin", originHistoryEditBtn, `origin-day:${dayIndex}`);
+      openOriginInlineEditorAt(originHistoryEditBtn, `origin-day:${dayIndex}`);
     }
     return;
   }
