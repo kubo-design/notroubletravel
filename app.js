@@ -1,3 +1,56 @@
+const storageState = {
+  warned: false,
+};
+
+function notifyStorageRestricted() {
+  if (storageState.warned) return;
+  storageState.warned = true;
+  const msg =
+    "このブラウザ設定では端末保存(localStorage)が制限され、入力内容が保持されない可能性があります。通常タブで開くか、プライバシー保護設定を緩和してください。";
+  try {
+    if (typeof setStatus === "function") {
+      setStatus(msg, true);
+    }
+  } catch {
+    // noop
+  }
+  try {
+    window.alert(msg);
+  } catch {
+    // noop
+  }
+}
+
+function getStorageItemSafe(key, fallback = "") {
+  try {
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value;
+  } catch {
+    notifyStorageRestricted();
+    return fallback;
+  }
+}
+
+function setStorageItemSafe(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch {
+    notifyStorageRestricted();
+    return false;
+  }
+}
+
+function removeStorageItemSafe(key) {
+  try {
+    localStorage.removeItem(key);
+    return true;
+  } catch {
+    notifyStorageRestricted();
+    return false;
+  }
+}
+
 const legacyOriginHistory = loadJson("ntt-origin-history", []);
 const initialPlaceHistoryRaw = loadJson("ntt-place-history", []);
 const initialPlaceHistory = [...initialPlaceHistoryRaw, ...legacyOriginHistory]
@@ -10,7 +63,7 @@ const state = {
   hotels: [],
   selectedHotel: null,
   originHistory: [],
-  defaultOrigin: localStorage.getItem("ntt-default-origin") || "",
+  defaultOrigin: getStorageItemSafe("ntt-default-origin", ""),
   hotelUrlHistory: loadJson("ntt-hotel-url-history", []),
   placeHistory: initialPlaceHistory,
   activeHistoryDropdownIndex: null,
@@ -150,9 +203,10 @@ const siteMap = {
 
 function loadJson(key, fallback) {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = getStorageItemSafe(key, null);
     return raw ? JSON.parse(raw) : fallback;
   } catch {
+    notifyStorageRestricted();
     return fallback;
   }
 }
@@ -182,7 +236,7 @@ function loadTransportDays() {
 }
 
 function loadActiveDayIndex() {
-  const raw = Number(localStorage.getItem("ntt-active-day-index"));
+  const raw = Number(getStorageItemSafe("ntt-active-day-index", ""));
   return Number.isInteger(raw) && raw >= 0 ? raw : 0;
 }
 
@@ -261,13 +315,13 @@ function registerUndoSnapshot() {
 function saveTransportState() {
   registerUndoSnapshot();
   if (!state.undoTypingSessionKey) {
-    const prevDaysRaw = localStorage.getItem("ntt-transport-days");
-    const prevActiveDayRaw = localStorage.getItem("ntt-active-day-index");
+    const prevDaysRaw = getStorageItemSafe("ntt-transport-days", null);
+    const prevActiveDayRaw = getStorageItemSafe("ntt-active-day-index", null);
     if (prevDaysRaw !== null) {
-      localStorage.setItem("ntt-transport-days-prev", prevDaysRaw);
+      setStorageItemSafe("ntt-transport-days-prev", prevDaysRaw);
     }
     if (prevActiveDayRaw !== null) {
-      localStorage.setItem("ntt-active-day-index-prev", prevActiveDayRaw);
+      setStorageItemSafe("ntt-active-day-index-prev", prevActiveDayRaw);
     }
   }
   const days = (state.transportDays || []).map((day, idx) => {
@@ -286,7 +340,7 @@ function saveTransportState() {
     return { origin, originNote, originNoteExpanded, points, expanded, headerEstimate, segmentTimes, completed, orderKey };
   });
   saveJson("ntt-transport-days", days);
-  localStorage.setItem("ntt-active-day-index", String(state.activeDayIndex));
+  setStorageItemSafe("ntt-active-day-index", String(state.activeDayIndex));
 }
 
 function getDayDisplayNumber(day, fallbackIndex = 0) {
@@ -376,7 +430,7 @@ function buildHeaderEstimateOptions(selectedValue = "") {
 }
 
 function saveJson(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+  setStorageItemSafe(key, JSON.stringify(value));
 }
 
 function setStatus(msg, isWarning = false) {
@@ -570,7 +624,7 @@ function saveOriginHistory(origin) {
 function saveDefaultOrigin(value) {
   const normalized = (value || "").trim();
   state.defaultOrigin = normalized;
-  localStorage.setItem("ntt-default-origin", normalized);
+  setStorageItemSafe("ntt-default-origin", normalized);
   refreshOriginInputPlaceholders();
 }
 
@@ -1112,7 +1166,7 @@ function normalizeStoredHistories() {
     .filter((item, idx, arr) => arr.indexOf(item) === idx)
     .slice(0, 50);
   saveJson("ntt-place-history", state.placeHistory);
-  localStorage.removeItem("ntt-origin-history");
+  removeStorageItemSafe("ntt-origin-history");
 
   state.hotelUrlHistory = (state.hotelUrlHistory || [])
     .map((item) => {
@@ -3301,8 +3355,8 @@ if (deleteRouteDayBtn) {
 function undoLastTransportAction() {
   let snapshot = state.undoStack.pop();
   if (!snapshot || !Array.isArray(snapshot.transportDays)) {
-    const backupDaysRaw = localStorage.getItem("ntt-transport-days-prev");
-    const backupActiveRaw = localStorage.getItem("ntt-active-day-index-prev");
+    const backupDaysRaw = getStorageItemSafe("ntt-transport-days-prev", null);
+    const backupActiveRaw = getStorageItemSafe("ntt-active-day-index-prev", null);
     if (backupDaysRaw) {
       try {
         const backupDays = JSON.parse(backupDaysRaw);
@@ -5075,11 +5129,11 @@ if (els.clearAll) {
   state.undoTypingSessionKey = "";
   state.isApplyingUndo = false;
 
-  localStorage.removeItem("ntt-history");
-  localStorage.removeItem("ntt-transport-days");
-  localStorage.removeItem("ntt-active-day-index");
-  localStorage.removeItem("ntt-transport-days-prev");
-  localStorage.removeItem("ntt-active-day-index-prev");
+  removeStorageItemSafe("ntt-history");
+  removeStorageItemSafe("ntt-transport-days");
+  removeStorageItemSafe("ntt-active-day-index");
+  removeStorageItemSafe("ntt-transport-days-prev");
+  removeStorageItemSafe("ntt-active-day-index-prev");
 
   els.transportForm.reset();
 
