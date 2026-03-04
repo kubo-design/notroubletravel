@@ -645,31 +645,45 @@ function refreshOriginInputPlaceholders() {
   });
 }
 
+function normalizeUrlValue(rawUrl) {
+  const raw = String(rawUrl || "").trim();
+  if (!raw) return "";
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    return new URL(withScheme).toString();
+  } catch {
+    return raw;
+  }
+}
+
 function saveHotelUrlHistory(url, preferredName = "") {
-  const normalized = url.trim();
+  const normalized = normalizeUrlValue(url);
   if (!normalized) return;
-  const existing = state.hotelUrlHistory.find((item) => item.url === normalized);
+  const existing = state.hotelUrlHistory.find((item) => normalizeUrlValue(item.url) === normalized);
   const parsed = buildHotelFromUrl(normalized);
   const displayName = existing?.name || preferredName.trim() || parsed?.name || normalized;
   saveHotelUrlHistoryEntry(normalized, displayName);
 }
 
 function saveHotelUrlHistoryEntry(url, name) {
-  const normalizedUrl = (url || "").trim();
+  const normalizedUrl = normalizeUrlValue(url);
   if (!normalizedUrl) return;
   const normalizedName = (name || "").trim() || normalizedUrl;
   const next = { url: normalizedUrl, name: normalizedName };
-  state.hotelUrlHistory = [next, ...state.hotelUrlHistory.filter((item) => item.url !== normalizedUrl)].slice(0, 20);
+  state.hotelUrlHistory = [
+    next,
+    ...state.hotelUrlHistory.filter((item) => normalizeUrlValue(item.url) !== normalizedUrl),
+  ].slice(0, 20);
   saveJson("ntt-hotel-url-history", state.hotelUrlHistory);
   refreshAllDayHistoryDropdownCaches();
 }
 
 function renameHotelUrlHistoryEntry(url, nextName) {
-  const normalizedUrl = (url || "").trim();
+  const normalizedUrl = normalizeUrlValue(url);
   const normalizedName = (nextName || "").trim();
   if (!normalizedUrl || !normalizedName) return;
   state.hotelUrlHistory = state.hotelUrlHistory.map((item) =>
-    item.url === normalizedUrl ? { ...item, name: normalizedName } : item,
+    normalizeUrlValue(item.url) === normalizedUrl ? { ...item, url: normalizeUrlValue(item.url), name: normalizedName } : item,
   );
   saveJson("ntt-hotel-url-history", state.hotelUrlHistory);
 }
@@ -691,11 +705,12 @@ function findHotelUrlHistoryByName(name) {
 function ensureHotelInListFromHistoryName(name) {
   const historyEntry = findHotelUrlHistoryByName(name);
   if (!historyEntry || !historyEntry.url) return null;
-  const existing = state.hotels.find((hotel) => hotel.url === historyEntry.url);
+  const targetUrl = normalizeUrlValue(historyEntry.url);
+  const existing = state.hotels.find((hotel) => normalizeUrlValue(hotel.url) === targetUrl);
   if (existing) {
     return existing;
   }
-  const item = buildHotelFromUrl(historyEntry.url, historyEntry.name || name);
+  const item = buildHotelFromUrl(targetUrl, historyEntry.name || name);
   if (!item) return null;
   state.hotels.push(item);
   return item;
@@ -2865,12 +2880,14 @@ function sortDaysByCompletionAndOrder() {
 
 function applyDayCompleteState(dayIndex, isChecked) {
   if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
-  state.transportDays[dayIndex].completed = Boolean(isChecked);
-  if (isChecked) {
+  const nextChecked = Boolean(isChecked);
+  if (Boolean(state.transportDays[dayIndex].completed) === nextChecked) return;
+  state.transportDays[dayIndex].completed = nextChecked;
+  if (nextChecked) {
     state.transportDays[dayIndex].expanded = false;
   }
   sortDaysByCompletionAndOrder();
-  setStatus(isChecked ? "DAYを完了にしました。" : "DAYの完了を解除しました。");
+  setStatus(nextChecked ? "DAYを完了にしました。" : "DAYの完了を解除しました。");
 }
 
 function buildRouteListHtmlForDay(dayIndex) {
@@ -3097,16 +3114,17 @@ function handleHotelRegisterSubmit(formEl) {
   if (!formEl) return;
   const card = formEl.closest(".card");
   const dayIndex = Number(card?.dataset.dayCardIndex);
-  if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
-    setActiveDay(dayIndex);
-  }
 
   const urlInput =
     formEl.querySelector("input[data-day-role='hotel-url-input']") ||
     formEl.querySelector("#hotelUrl");
   if (!urlInput) return;
 
-  const hotelUrl = urlInput.value.trim();
+  const hotelUrlRaw = urlInput.value.trim();
+  const hotelUrl = normalizeUrlValue(hotelUrlRaw);
+  if (hotelUrl && hotelUrl !== hotelUrlRaw) {
+    urlInput.value = hotelUrl;
+  }
   const now = Date.now();
   if (
     hotelUrl &&
@@ -3116,13 +3134,17 @@ function handleHotelRegisterSubmit(formEl) {
   ) {
     return false;
   }
-  const historyEntry = state.hotelUrlHistory.find((entry) => entry.url === hotelUrl);
-  const existing = state.hotels.find((hotel) => (hotel.url || "").trim() === hotelUrl);
+  const historyEntry = state.hotelUrlHistory.find((entry) => normalizeUrlValue(entry.url) === hotelUrl);
+  const existing = state.hotels.find((hotel) => normalizeUrlValue(hotel.url) === hotelUrl);
   const item = buildHotelFromUrl(hotelUrl, historyEntry?.name || existing?.name || "");
 
   if (!item) {
     setStatus("有効な宿URLを入力してください。", true);
     return false;
+  }
+
+  if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+    setActiveDay(dayIndex);
   }
 
   let targetHotel = item;
@@ -3890,6 +3912,14 @@ document.addEventListener("change", async (e) => {
     }
     return;
   }
+});
+
+document.addEventListener("click", (e) => {
+  const dayCompleteCheck = e.target.closest("input.day-complete-check[data-day-complete]");
+  if (!dayCompleteCheck) return;
+  const card = dayCompleteCheck.closest(".card");
+  const dayIndex = card ? Number(card.dataset.dayCardIndex) : NaN;
+  applyDayCompleteState(dayIndex, dayCompleteCheck.checked);
 });
 
 if (els.hotelUrlHistoryBtn) {
