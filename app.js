@@ -1940,7 +1940,7 @@ function ensureDayCardAccordionStructure() {
       card.querySelector("input[placeholder='目的地']") ||
       card.querySelector("input[placeholder*='GOAL']");
     if (destinationInput) destinationInput.dataset.dayRole = "destination-input";
-    const routeList = card.querySelector("#route-list, .box.muted");
+    const routeList = card.querySelector("#route-list, [data-day-role='route-list'], .route-list-plain, .box.muted");
     if (routeList) routeList.dataset.dayRole = "route-list";
     const detailBox = card.querySelector("#transport-detail, [data-day-role='transport-detail']");
     if (detailBox) detailBox.dataset.dayRole = "transport-detail";
@@ -2482,18 +2482,19 @@ function buildRouteListHtmlForDay(dayIndex) {
 }
 
 function renderRouteList() {
+  normalizeAllDays();
   if (!state.transportDays.length) {
-    els.routeList.textContent = "DAYを追加してください。";
-    els.routeList.classList.add("muted");
+    const cards = ensureDayCardAccordionStructure();
+    const firstCard = cards[0];
+    const target = firstCard ? firstCard.querySelector("[data-day-role='route-list']") : els.routeList;
+    if (target) {
+      target.textContent = "DAYを追加してください。";
+      target.classList.add("muted");
+    }
     saveTransportState();
     return;
   }
-  normalizeAllDays();
-  const dayIndex = state.activeDayIndex;
-  const routeItemsHtml = buildRouteListHtmlForDay(dayIndex);
-  els.routeList.classList.remove("muted");
-  els.routeList.innerHTML = `<ul class="route-items" data-day-dropzone="${dayIndex}">${routeItemsHtml}</ul>`;
-  setActiveDay(state.activeDayIndex);
+  renderRouteListIntoDayCard(state.activeDayIndex);
   syncPlaceInlineEditorButtons();
   saveTransportState();
 }
