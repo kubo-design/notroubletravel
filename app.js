@@ -1527,7 +1527,9 @@ function updateDestinationByInputElement(inputEl, options = {}) {
   if (render && dayIndex === state.activeDayIndex) {
     renderRouteList();
     renderTransportDetail();
+    return;
   }
+  saveTransportState();
 }
 
 function moveRoutePoint(fromIndex, toIndex) {
@@ -1958,11 +1960,7 @@ function isDayCardOpen(card) {
 function setupDayAccordionDefaults() {
   const cards = ensureDayCardAccordionStructure();
   if (!cards.length) return;
-  let openIndex = Number.isInteger(state.activeDayIndex) ? state.activeDayIndex : 0;
-  if (openIndex < 0 || openIndex >= cards.length || state.transportDays[openIndex]?.completed) {
-    const firstIncomplete = state.transportDays.findIndex((day) => !day.completed);
-    openIndex = firstIncomplete >= 0 ? firstIncomplete : 0;
-  }
+  const openIndex = 0;
   state.activeDayIndex = openIndex;
   cards.forEach((card, idx) => {
     setDayCardOpen(card, idx === openIndex);
@@ -2331,7 +2329,10 @@ function buildRouteListHtmlForDay(dayIndex) {
   const day = state.transportDays[dayIndex];
   if (!day) return "<li class='route-origin'>経由地または目的地を追加してください。</li>";
   const points = day.points.map(ensurePointObject);
-  const destinationPoint = points.find((point) => point.isDestination) || points[points.length - 1];
+  const destinationPoint =
+    points.find((point) => point.isDestination) ||
+    points[points.length - 1] ||
+    { name: "", url: "", candidates: [], isDestination: true, expanded: false, checked: false };
   const destinationIndex = destinationPoint ? points.findIndex((point) => point === destinationPoint) : -1;
   const waypoints = points
     .map((point, sourceIndex) => ({ point, sourceIndex }))
@@ -2416,7 +2417,7 @@ function buildRouteListHtmlForDay(dayIndex) {
         <select class="tiny route-segment-time-select ${canOpen ? "" : "route-segment-time-disabled"}" data-segment-time-select="${dayIndex}:${segmentVisualIndex}" ${canOpen ? "" : "disabled"}>
           ${optionsHtml}
         </select>
-        <button type="button" class="ghost tiny route-segment-add-btn" data-add-waypoint-at="${dayIndex}:${insertAtIndex}" ${canOpen ? "" : "disabled"}>追加</button>
+        <button type="button" class="ghost tiny route-segment-add-btn" data-add-waypoint-at="${dayIndex}:${insertAtIndex}">追加</button>
       </li>
     `;
     segmentVisualIndex += 1;
@@ -2734,7 +2735,9 @@ function updateOriginByInputElement(inputEl) {
   if (dayIndex === state.activeDayIndex) {
     renderRouteList();
     renderTransportDetail();
+    return;
   }
+  saveTransportState();
 }
 
 document.addEventListener("input", (e) => {
@@ -4106,9 +4109,7 @@ function init() {
       els.destinationInput.value = destinationPoint.name;
     }
   }
-  if (!Number.isInteger(state.activeDayIndex) || state.activeDayIndex < 0 || state.activeDayIndex >= state.transportDays.length) {
-    state.activeDayIndex = 0;
-  }
+  state.activeDayIndex = 0;
   renderHotelResults();
   renderSelectedHotel();
   renderOriginHistory();
