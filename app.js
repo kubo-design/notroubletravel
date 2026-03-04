@@ -1374,7 +1374,7 @@ function renderSelectedHotel() {
 }
 
 function updateHotelNameById(hotelId, nextNameRaw, options = {}) {
-  const { silent = false } = options;
+  const { silent = false, skipDestinationSync = false } = options;
   const target = state.hotels.find((hotel) => hotel.id === hotelId);
   if (!target) return;
   const nextName = (nextNameRaw || "").trim();
@@ -1390,7 +1390,9 @@ function updateHotelNameById(hotelId, nextNameRaw, options = {}) {
   const updated = state.hotels.find((hotel) => hotel.id === hotelId);
   if (state.selectedHotel && state.selectedHotel.id === hotelId) {
     state.selectedHotel = { ...state.selectedHotel, name: nextName };
-    syncDestinationWithHotel(state.selectedHotel);
+    if (!skipDestinationSync) {
+      syncDestinationWithHotel(state.selectedHotel);
+    }
   }
   if (updated) {
     renameHotelUrlHistoryEntry(updated.url, nextName);
@@ -1514,6 +1516,14 @@ function updateDestinationByInputElement(inputEl, options = {}) {
 
   if (saveHistory && normalized) {
     savePlaceHistory(normalized);
+    const destinationPoint = day.points.find((p) => ensurePointObject(p).isDestination);
+    const linkedUrl = (destinationPoint?.url || "").trim();
+    if (linkedUrl) {
+      const linkedHotel = state.hotels.find((hotel) => (hotel.url || "").trim() === linkedUrl);
+      if (linkedHotel && linkedHotel.name !== normalized) {
+        updateHotelNameById(linkedHotel.id, normalized, { silent: true, skipDestinationSync: true });
+      }
+    }
   }
   if (render && dayIndex === state.activeDayIndex) {
     renderRouteList();
@@ -3724,15 +3734,27 @@ els.routeList.addEventListener("input", (e) => {
   const nameInput = e.target.closest("input[data-point-input]");
   if (nameInput) {
     const { dayIndex, pointIndex } = parseDayAndIndex(nameInput.dataset.pointInput);
-    const key = nameInput.dataset.pointInput;
-    const selStart = nameInput.selectionStart;
-    const selEnd = nameInput.selectionEnd;
     setActiveDay(dayIndex);
     if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= state.transportPlan.points.length) return;
     const current = ensurePointObject(state.transportPlan.points[pointIndex]);
+    const beforeHasValue = Boolean((current.name || "").trim());
+    const afterHasValue = Boolean((nameInput.value || "").trim());
     state.transportPlan.points[pointIndex] = { ...current, name: nameInput.value };
     normalizeRoutePoints();
-    rerenderRouteListKeepingPointFocus(key, selStart, selEnd);
+    // Mobile IME対策:
+    // 変換中は再描画しない。空⇔入力済みの境界だけ再描画して区間ボタン状態を更新する。
+    if (e.isComposing || (e.inputType && e.inputType.includes("Composition"))) {
+      renderTransportDetail();
+      return;
+    }
+    if (beforeHasValue !== afterHasValue) {
+      const key = nameInput.dataset.pointInput;
+      const selStart = nameInput.selectionStart;
+      const selEnd = nameInput.selectionEnd;
+      rerenderRouteListKeepingPointFocus(key, selStart, selEnd);
+    } else {
+      renderTransportDetail();
+    }
     return;
   }
 
