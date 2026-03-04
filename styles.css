@@ -85,6 +85,50 @@ body {
   margin-top: 0;
 }
 
+.header-io-btn {
+  min-height: auto;
+  height: auto;
+  padding: 6px 8px;
+  border: 3px solid #1b2940 !important;
+  border-radius: 3px;
+  background: #fff !important;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #1b2940 !important;
+}
+
+.header-io-icon {
+  width: auto;
+  height: auto;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  flex: 0 0 auto;
+}
+
+.header-io-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: #1b2940;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.header-io-btn:hover {
+  filter: none;
+}
+
 .stack {
   display: grid;
   gap: 14px;
@@ -157,6 +201,43 @@ h3 {
   gap: 6px;
 }
 
+.day-io-mini-btn {
+  min-height: auto;
+  height: auto;
+  padding: 0;
+  border: none !important;
+  background: transparent !important;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  color: #1b2940 !important;
+  flex: 0 0 auto;
+}
+
+.day-io-mini-icon {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #1b2940;
+  border-radius: 3px;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.day-io-mini-label {
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1;
+  color: #1b2940;
+  white-space: nowrap;
+}
+
 .day-route-actions {
   display: flex;
   align-items: center;
@@ -188,6 +269,10 @@ h3 {
   margin-left: 0;
   width: auto;
   flex-wrap: nowrap;
+}
+
+.day-card-head .day-actions .day-io-mini-btn {
+  flex: 0 0 auto !important;
 }
 
 .day-card-head .day-route-actions {
@@ -261,7 +346,7 @@ h3 {
 .origin-action-row {
   margin-top: 8px;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -277,9 +362,54 @@ h3 {
   color: #fff;
 }
 
+.history-toggle-active {
+  background: #111 !important;
+  color: #fff !important;
+  border-color: #111 !important;
+}
+
+button[data-day-role="origin-history-btn"],
+button[data-day-role="destination-history-btn"],
+button[data-open-history] {
+  background: #4f7ea8 !important;
+  color: #fff !important;
+  border-color: #4f7ea8 !important;
+}
+
+#origin-url-suggest-btn,
+#destination-url-suggest-btn,
+button[data-url-suggest] {
+  background: #111 !important;
+  color: #fff !important;
+  border-color: #111 !important;
+}
+
+.note-toggle-active {
+  background: #111 !important;
+  color: #fff !important;
+  border-color: #111 !important;
+}
+
 .origin-current-btn {
   background: #ee8f21;
   color: #fff;
+}
+
+[data-day-role="origin-note-wrap"],
+[data-day-role="destination-note-wrap"] {
+  margin-top: 8px;
+}
+
+[data-day-role="origin-note-wrap"] textarea,
+[data-day-role="destination-note-wrap"] textarea,
+.route-waypoint-note textarea {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-height: 56px;
+  overflow: hidden;
+  resize: none;
+  color: #4f5d6b;
 }
 
 .origin-inline-editor {
@@ -685,6 +815,27 @@ td {
   display: none;
 }
 
+.undo-action-btn {
+  position: fixed;
+  right: 30px;
+  bottom: 14px;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  aspect-ratio: 1 / 1;
+  border-radius: 999px;
+  border: 2px solid #fff;
+  background: #0b4f31;
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
 .tiny {
   padding: 7px 10px;
   font-size: 0.85rem;
@@ -739,12 +890,25 @@ td {
 
 .route-segment-time-select {
   min-width: 116px;
+  background: #ff4c0d !important;
+  color: #fff !important;
+  border-color: #ff4c0d !important;
+}
+
+.route-segment-time-select.is-selected-time,
+select[data-day-role="day-header-time-select"].is-selected-time {
+  background: #111 !important;
+  color: #fff !important;
+  border-color: #111 !important;
 }
 
 .route-segment-only button {
   min-height: 42px;
   padding-top: 10px;
   padding-bottom: 10px;
+  background: #ff4c0d !important;
+  color: #fff !important;
+  border-color: #ff4c0d !important;
 }
 
 .route-segment-disabled-btn,
@@ -859,9 +1023,20 @@ button[data-section-toggle].is-open,
 
 .route-waypoint-history-tools {
   display: grid;
-  grid-template-columns: auto auto auto;
+  grid-template-columns: auto auto auto auto;
   gap: 8px;
   align-items: center;
+}
+
+.route-waypoint-note {
+  margin-top: 8px;
+}
+
+.note-tools {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
 }
 
 .route-actions.route-waypoint-search-row {
@@ -945,7 +1120,7 @@ button[data-section-toggle].is-open,
 
 .route-history-tools.route-waypoint-history-tools {
   display: grid;
-  grid-template-columns: auto auto auto;
+  grid-template-columns: auto auto auto auto;
   gap: 8px;
   align-items: center;
 }
@@ -1173,7 +1348,7 @@ button[data-section-toggle].is-open,
   }
 
   .route-waypoint-history-tools {
-    grid-template-columns: auto auto auto;
+    grid-template-columns: auto auto auto auto;
   }
 
   .route-actions.route-waypoint-search-row .route-url-input {
@@ -1246,6 +1421,16 @@ button[data-section-toggle].is-open,
     padding: 6px 9px;
   }
 
+  .header-io-btn {
+    min-height: auto !important;
+    padding: 5px 6px !important;
+    gap: 6px;
+  }
+
+  .header-io-icon {
+    font-size: 22px;
+  }
+
   .day-card-head {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -1253,11 +1438,25 @@ button[data-section-toggle].is-open,
       "title actions"
       "title maps";
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
 
   .day-card-head .day-title {
     min-width: 0;
+  }
+
+  .day-card-head .day-title-main {
+    gap: 4px;
+  }
+
+  .day-card-head .day-title h2 {
+    font-size: 1.05rem;
+    line-height: 1;
+  }
+
+  .day-card-head .day-complete-check {
+    width: 16px;
+    height: 16px;
   }
 
   .day-card-head .day-route-actions {
@@ -1272,6 +1471,30 @@ button[data-section-toggle].is-open,
   .day-card-head .day-actions {
     margin-left: 0;
     justify-self: end;
+    gap: 4px;
+    flex-wrap: nowrap;
+    width: auto !important;
+    overflow-x: visible;
+  }
+
+  .day-card-head .day-actions .icon-btn {
+    width: 30px;
+    min-width: 30px;
+    height: 30px;
+    min-height: 30px;
+    font-size: 14px;
+    padding: 0;
+  }
+
+  .day-io-mini-icon {
+    width: 30px;
+    height: 30px;
+    font-size: 14px;
+    border-width: 2px;
+  }
+
+  .day-io-mini-label {
+    font-size: 0.55rem;
   }
 
   h2 {
@@ -1375,7 +1598,7 @@ button[data-section-toggle].is-open,
   }
 
   .route-waypoint-history-tools {
-    grid-template-columns: auto auto auto;
+    grid-template-columns: auto auto auto auto;
     align-items: center;
   }
 

@@ -32,6 +32,13 @@ const state = {
   originUrlCandidates: [],
   destinationUrlCandidates: [],
   destinationNameCandidates: [],
+  undoStack: [],
+  lastUndoSnapshot: null,
+  lastUndoSignature: "",
+  lastUndoDaysSignature: "",
+  lastUndoPushAt: 0,
+  undoTypingSessionKey: "",
+  isApplyingUndo: false,
 };
 
 Object.defineProperty(state, "originHistory", {
@@ -46,7 +53,7 @@ Object.defineProperty(state, "originHistory", {
 Object.defineProperty(state, "transportPlan", {
   get() {
     if (!state.transportDays.length) {
-      state.transportDays.push({ origin: "", points: [], expanded: true, completed: false, orderKey: 0 });
+      state.transportDays.push({ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, completed: false, orderKey: 0 });
       state.activeDayIndex = 0;
     }
     if (state.activeDayIndex < 0 || state.activeDayIndex >= state.transportDays.length) {
@@ -102,6 +109,7 @@ const els = {
   originInlineEditor: document.getElementById("origin-inline-editor"),
   originInlineHistoryList: document.getElementById("origin-inline-history-list"),
   originInlineSelectAll: document.getElementById("origin-inline-select-all"),
+  originInlineClearAll: document.getElementById("origin-inline-clear-all"),
   originInlineDeleteSelected: document.getElementById("origin-inline-delete-selected"),
   addRoutePoint: document.getElementById("add-route-point"),
   addWaypointBtn: document.getElementById("add-waypoint-btn"),
@@ -111,6 +119,7 @@ const els = {
   historyEditorList: document.getElementById("history-editor-list"),
   historyEditorClose: document.getElementById("history-editor-close"),
   historySelectAll: document.getElementById("history-select-all"),
+  historyClearAll: document.getElementById("history-clear-all"),
   historyDeleteSelected: document.getElementById("history-delete-selected"),
   spotForm: document.getElementById("spot-form"),
   spotList: document.getElementById("spot-list"),
@@ -127,6 +136,7 @@ const els = {
   exportChoiceAirdrop: document.getElementById("export-choice-airdrop"),
   exportChoiceLine: document.getElementById("export-choice-line"),
   status: document.getElementById("status"),
+  undoActionBtn: document.getElementById("undo-action-btn"),
 };
 
 const siteMap = {
@@ -148,11 +158,13 @@ function loadJson(key, fallback) {
 }
 
 function loadTransportDays() {
-  const fallback = [{ origin: "", points: [], expanded: true, completed: false, orderKey: 0 }];
+  const fallback = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, completed: false, orderKey: 0 }];
   const days = loadJson("ntt-transport-days", fallback);
   if (!Array.isArray(days) || !days.length) return fallback;
   const normalized = days.map((day, idx) => {
     const origin = typeof day?.origin === "string" ? day.origin : "";
+    const originNote = typeof day?.originNote === "string" ? day.originNote : "";
+    const originNoteExpanded = Boolean(day?.originNoteExpanded);
     const points = Array.isArray(day?.points) ? day.points.map(ensurePointObject) : [];
     const expanded = typeof day?.expanded === "boolean" ? day.expanded : idx === 0;
     const headerEstimate = typeof day?.headerEstimate === "string" ? day.headerEstimate : "";
@@ -162,7 +174,7 @@ function loadTransportDays() {
         : {};
     const completed = typeof day?.completed === "boolean" ? day.completed : false;
     const orderKey = Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx;
-    const next = { origin, points, expanded, headerEstimate, segmentTimes, completed, orderKey };
+    const next = { origin, originNote, originNoteExpanded, points, expanded, headerEstimate, segmentTimes, completed, orderKey };
     normalizePlanPoints(next);
     return next;
   });
@@ -174,9 +186,11 @@ function loadActiveDayIndex() {
   return Number.isInteger(raw) && raw >= 0 ? raw : 0;
 }
 
-function saveTransportState() {
+function captureTransportUndoSnapshot() {
   const days = (state.transportDays || []).map((day, idx) => {
     const origin = typeof day?.origin === "string" ? day.origin : "";
+    const originNote = typeof day?.originNote === "string" ? day.originNote : "";
+    const originNoteExpanded = Boolean(day?.originNoteExpanded);
     const points = Array.isArray(day?.points) ? day.points.map(ensurePointObject) : [];
     const expanded = typeof day?.expanded === "boolean" ? day.expanded : idx === state.activeDayIndex;
     const headerEstimate = typeof day?.headerEstimate === "string" ? day.headerEstimate : "";
@@ -186,7 +200,90 @@ function saveTransportState() {
         : {};
     const completed = typeof day?.completed === "boolean" ? day.completed : false;
     const orderKey = Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx;
-    return { origin, points, expanded, headerEstimate, segmentTimes, completed, orderKey };
+    return { origin, originNote, originNoteExpanded, points, expanded, headerEstimate, segmentTimes, completed, orderKey };
+  });
+  return {
+    transportDays: days,
+    activeDayIndex: Number.isInteger(state.activeDayIndex) ? state.activeDayIndex : 0,
+  };
+}
+
+function pushUndoCheckpoint(snapshot) {
+  if (!snapshot) return;
+  const sig = JSON.stringify(snapshot);
+  const top = state.undoStack.length ? state.undoStack[state.undoStack.length - 1] : null;
+  if (top && JSON.stringify(top) === sig) return;
+  state.undoStack.push(snapshot);
+  if (state.undoStack.length > 5) {
+    state.undoStack.shift();
+  }
+}
+
+function registerUndoSnapshot() {
+  if (state.isApplyingUndo) return;
+  const snapshot = captureTransportUndoSnapshot();
+  const signature = JSON.stringify(snapshot);
+  const daysSignature = JSON.stringify(snapshot.transportDays);
+  if (state.undoTypingSessionKey) {
+    state.lastUndoSnapshot = snapshot;
+    state.lastUndoSignature = signature;
+    state.lastUndoDaysSignature = daysSignature;
+    return;
+  }
+  const now = Date.now();
+  if (!state.lastUndoSnapshot || !state.lastUndoSignature) {
+    state.lastUndoSnapshot = snapshot;
+    state.lastUndoSignature = signature;
+    state.lastUndoDaysSignature = daysSignature;
+    state.lastUndoPushAt = now;
+    return;
+  }
+  if (daysSignature === state.lastUndoDaysSignature) {
+    state.lastUndoSnapshot = snapshot;
+    state.lastUndoSignature = signature;
+    state.lastUndoDaysSignature = daysSignature;
+    return;
+  }
+  // 連続入力を1操作としてまとめる（1文字ずつ戻るのを防ぐ）
+  if (now - Number(state.lastUndoPushAt || 0) < 800) {
+    state.lastUndoSnapshot = snapshot;
+    state.lastUndoSignature = signature;
+    state.lastUndoDaysSignature = daysSignature;
+    return;
+  }
+  pushUndoCheckpoint(state.lastUndoSnapshot);
+  state.lastUndoSnapshot = snapshot;
+  state.lastUndoSignature = signature;
+  state.lastUndoDaysSignature = daysSignature;
+  state.lastUndoPushAt = now;
+}
+
+function saveTransportState() {
+  registerUndoSnapshot();
+  if (!state.undoTypingSessionKey) {
+    const prevDaysRaw = localStorage.getItem("ntt-transport-days");
+    const prevActiveDayRaw = localStorage.getItem("ntt-active-day-index");
+    if (prevDaysRaw !== null) {
+      localStorage.setItem("ntt-transport-days-prev", prevDaysRaw);
+    }
+    if (prevActiveDayRaw !== null) {
+      localStorage.setItem("ntt-active-day-index-prev", prevActiveDayRaw);
+    }
+  }
+  const days = (state.transportDays || []).map((day, idx) => {
+    const origin = typeof day?.origin === "string" ? day.origin : "";
+    const originNote = typeof day?.originNote === "string" ? day.originNote : "";
+    const originNoteExpanded = Boolean(day?.originNoteExpanded);
+    const points = Array.isArray(day?.points) ? day.points.map(ensurePointObject) : [];
+    const expanded = typeof day?.expanded === "boolean" ? day.expanded : idx === state.activeDayIndex;
+    const headerEstimate = typeof day?.headerEstimate === "string" ? day.headerEstimate : "";
+    const segmentTimes =
+      day?.segmentTimes && typeof day.segmentTimes === "object" && !Array.isArray(day.segmentTimes)
+        ? day.segmentTimes
+        : {};
+    const completed = typeof day?.completed === "boolean" ? day.completed : false;
+    const orderKey = Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx;
+    return { origin, originNote, originNoteExpanded, points, expanded, headerEstimate, segmentTimes, completed, orderKey };
   });
   saveJson("ntt-transport-days", days);
   localStorage.setItem("ntt-active-day-index", String(state.activeDayIndex));
@@ -740,6 +837,40 @@ function closeHistoryEditor() {
   syncPlaceInlineEditorButtons();
 }
 
+function ensureHistoryClearButtons() {
+  const originActions = document.querySelector(".origin-inline-actions");
+  if (originActions && !originActions.querySelector("#origin-inline-clear-all")) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "origin-inline-clear-all";
+    btn.className = "ghost";
+    btn.textContent = "クリア";
+    const selectAllBtn = originActions.querySelector("#origin-inline-select-all");
+    if (selectAllBtn) {
+      selectAllBtn.insertAdjacentElement("afterend", btn);
+    } else {
+      originActions.prepend(btn);
+    }
+    els.originInlineClearAll = btn;
+  }
+
+  const historyActions = document.querySelector(".history-modal-actions");
+  if (historyActions && !historyActions.querySelector("#history-clear-all")) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "history-clear-all";
+    btn.className = "ghost tiny";
+    btn.textContent = "クリア";
+    const selectAllBtn = historyActions.querySelector("#history-select-all");
+    if (selectAllBtn) {
+      selectAllBtn.insertAdjacentElement("afterend", btn);
+    } else {
+      historyActions.prepend(btn);
+    }
+    els.historyClearAll = btn;
+  }
+}
+
 function renderOriginHistory() {
   if (!els.originHistory) return;
   els.originHistory.innerHTML = state.originHistory.map((o) => `<option value="${o}"></option>`).join("");
@@ -1065,10 +1196,30 @@ function refreshAllDayHistoryDropdownCaches() {
   });
 }
 
+function setDayHistoryButtonState(card, target, isOpen) {
+  if (!card) return;
+  const role =
+    target === "origin"
+      ? "origin-history-btn"
+      : target === "destination"
+        ? "destination-history-btn"
+        : "hotel-url-history-btn";
+  const btn = card.querySelector(`[data-day-role='${role}']`);
+  if (!btn) return;
+  btn.textContent = isOpen ? "閉じる" : "履歴";
+  btn.classList.toggle("history-toggle-active", isOpen);
+}
+
 function closeAllDayHistoryDropdowns() {
   document
     .querySelectorAll("[data-day-role='origin-history-dropdown'], [data-day-role='destination-history-dropdown'], [data-day-role='hotel-url-history-dropdown']")
     .forEach((el) => el.classList.add("hidden"));
+  const cards = ensureDayCardAccordionStructure();
+  cards.forEach((card) => {
+    setDayHistoryButtonState(card, "origin", false);
+    setDayHistoryButtonState(card, "destination", false);
+    setDayHistoryButtonState(card, "hotelUrl", false);
+  });
 }
 
 function applyCurrentLocationToDay(dayIndex) {
@@ -1119,8 +1270,10 @@ function toggleDayHistoryDropdown(card, target) {
   if (willOpen) {
     renderTopHistoryDropdownForElement(target, dropdown);
     dropdown.classList.remove("hidden");
+    setDayHistoryButtonState(card, target, true);
   } else {
     dropdown.classList.add("hidden");
+    setDayHistoryButtonState(card, target, false);
   }
 }
 
@@ -1141,6 +1294,15 @@ function toggleTopHistoryDropdown(target) {
   if (els.destinationHistoryDropdown) {
     els.destinationHistoryDropdown.classList.toggle("hidden", state.activeTopHistoryDropdown !== "destination");
   }
+
+  const setTopBtn = (btn, isOpen) => {
+    if (!btn) return;
+    btn.textContent = isOpen ? "閉じる" : "履歴";
+    btn.classList.toggle("history-toggle-active", isOpen);
+  };
+  setTopBtn(els.originHistoryBtn, state.activeTopHistoryDropdown === "origin");
+  setTopBtn(els.destinationHistoryBtn, state.activeTopHistoryDropdown === "destination");
+  setTopBtn(els.hotelUrlHistoryBtn, state.activeTopHistoryDropdown === "hotelUrl");
 }
 
 function closeTopHistoryDropdowns() {
@@ -1154,6 +1316,11 @@ function closeTopHistoryDropdowns() {
   if (els.destinationHistoryDropdown) {
     els.destinationHistoryDropdown.classList.add("hidden");
   }
+  [els.originHistoryBtn, els.destinationHistoryBtn, els.hotelUrlHistoryBtn].forEach((btn) => {
+    if (!btn) return;
+    btn.textContent = "履歴";
+    btn.classList.remove("history-toggle-active");
+  });
 }
 
 function calcNights(checkin, checkout) {
@@ -1435,7 +1602,10 @@ function syncDestinationWithHotel(hotel) {
     state.transportPlan.points.push({
       name: destination,
       url: hotel.url || "",
+      note: "",
+      noteExpanded: false,
       candidates: [],
+      expanded: false,
       isDestination: true,
     });
   }
@@ -1475,7 +1645,10 @@ function syncDestinationFromInput(destinationName, options = {}) {
     state.transportPlan.points.push({
       name: normalized,
       url: "",
+      note: "",
+      noteExpanded: false,
       candidates: [],
+      expanded: false,
       isDestination: true,
     });
   }
@@ -1509,7 +1682,15 @@ function updateDestinationByInputElement(inputEl, options = {}) {
     const current = ensurePointObject(day.points[destinationIndex]);
     day.points[destinationIndex] = { ...current, name: normalized, isDestination: true };
   } else {
-    day.points.push({ name: normalized, url: "", candidates: [], isDestination: true, expanded: false });
+    day.points.push({
+      name: normalized,
+      url: "",
+      note: "",
+      noteExpanded: false,
+      candidates: [],
+      isDestination: true,
+      expanded: false,
+    });
     normalizePlanPoints(day);
   }
 
@@ -1528,6 +1709,7 @@ function updateDestinationByInputElement(inputEl, options = {}) {
     if (render) {
       renderRouteList();
       renderTransportDetail();
+      saveTransportState();
       return;
     }
     saveTransportState();
@@ -1579,11 +1761,13 @@ function movePointToAnotherDay(fromDay, pointIndex, toDay) {
 
 function ensurePointObject(point) {
   if (typeof point === "string") {
-    return { name: point, url: "", candidates: [], isDestination: false, expanded: false, checked: false };
+    return { name: point, url: "", note: "", noteExpanded: false, candidates: [], isDestination: false, expanded: false, checked: false };
   }
   return {
     name: point?.name || "",
     url: point?.url || "",
+    note: point?.note || "",
+    noteExpanded: Boolean(point?.noteExpanded),
     candidates: Array.isArray(point?.candidates) ? point.candidates : [],
     isDestination: Boolean(point?.isDestination),
     expanded: Boolean(point?.expanded),
@@ -1766,12 +1950,28 @@ function setActiveDay(dayIndex) {
     if (originInput) {
       originInput.value = state.transportPlan.origin || "";
     }
+    const originNoteInput = card.querySelector("textarea[data-day-role='origin-note-input']");
+    const originNoteWrap = card.querySelector("[data-day-role='origin-note-wrap']");
+    if (originNoteInput) {
+      originNoteInput.value = state.transportPlan.originNote || "";
+    }
+    if (originNoteWrap) {
+      originNoteWrap.classList.toggle("hidden", !state.transportPlan.originNoteExpanded);
+    }
     const destinationInput = card.querySelector("input[data-day-role='destination-input']");
+    const destinationNoteInput = card.querySelector("textarea[data-day-role='destination-note-input']");
+    const destinationNoteWrap = card.querySelector("[data-day-role='destination-note-wrap']");
     if (destinationInput) {
       const destinationPoint = (state.transportPlan.points || [])
         .map(ensurePointObject)
         .find((point) => point.isDestination);
       destinationInput.value = destinationPoint?.name || "";
+      if (destinationNoteInput) {
+        destinationNoteInput.value = destinationPoint?.note || "";
+      }
+      if (destinationNoteWrap) {
+        destinationNoteWrap.classList.toggle("hidden", !destinationPoint?.noteExpanded);
+      }
     }
   }
   saveTransportState();
@@ -1787,18 +1987,48 @@ function syncDayCardInputsFromState(dayIndex) {
   if (originInput) {
     originInput.value = day.origin || "";
   }
+  const originNoteInput = card.querySelector("textarea[data-day-role='origin-note-input']");
+  if (originNoteInput) {
+    originNoteInput.value = day.originNote || "";
+    autoResizeNoteTextarea(originNoteInput);
+  }
+  const originNoteWrap = card.querySelector("[data-day-role='origin-note-wrap']");
+  const originNoteToggleBtn = card.querySelector("button[data-day-role='origin-note-toggle']");
+  if (originNoteWrap) {
+    originNoteWrap.classList.toggle("hidden", !day.originNoteExpanded);
+  }
+  if (originNoteToggleBtn) {
+    originNoteToggleBtn.textContent = day.originNoteExpanded ? "備考閉" : "備考";
+    originNoteToggleBtn.classList.toggle("note-toggle-active", day.originNoteExpanded);
+  }
 
   const destinationInput = card.querySelector("input[data-day-role='destination-input']");
+  const destinationNoteInput = card.querySelector("textarea[data-day-role='destination-note-input']");
+  const destinationNoteWrap = card.querySelector("[data-day-role='destination-note-wrap']");
+  const destinationNoteToggleBtn = card.querySelector("button[data-day-role='destination-note-toggle']");
   if (destinationInput) {
     const destinationPoint = (day.points || [])
       .map(ensurePointObject)
       .find((point) => point.isDestination);
     destinationInput.value = destinationPoint?.name || "";
+    if (destinationNoteInput) {
+      destinationNoteInput.value = destinationPoint?.note || "";
+      autoResizeNoteTextarea(destinationNoteInput);
+    }
+    if (destinationNoteWrap) {
+      destinationNoteWrap.classList.toggle("hidden", !destinationPoint?.noteExpanded);
+    }
+    if (destinationNoteToggleBtn) {
+      const isOpen = Boolean(destinationPoint?.noteExpanded);
+      destinationNoteToggleBtn.textContent = isOpen ? "備考閉" : "備考";
+      destinationNoteToggleBtn.classList.toggle("note-toggle-active", isOpen);
+    }
   }
 
   const dayHeaderTime = card.querySelector("select[data-day-role='day-header-time-select']");
   if (dayHeaderTime) {
     dayHeaderTime.innerHTML = buildHeaderEstimateOptions(day.headerEstimate || "");
+    dayHeaderTime.classList.toggle("is-selected-time", Boolean(String(day.headerEstimate || "").trim()));
   }
 }
 
@@ -1894,24 +2124,61 @@ function ensureDayCardAccordionStructure() {
     toggle.setAttribute("aria-label", "DAY開閉");
     toggle.setAttribute("title", "DAY開閉");
 
-    if (!tools.querySelector(".day-export-btn")) {
-      const exportBtn = document.createElement("button");
+    let exportBtn = tools.querySelector(".day-export-btn");
+    if (!exportBtn) {
+      exportBtn = document.createElement("button");
       exportBtn.type = "button";
-      exportBtn.className = "ghost tiny day-export-btn icon-btn";
-      exportBtn.textContent = "↑";
-      exportBtn.setAttribute("aria-label", "書き出し");
-      exportBtn.setAttribute("title", "書き出し");
-      tools.appendChild(exportBtn);
     }
-    if (!tools.querySelector(".day-import-btn")) {
-      const importBtn = document.createElement("button");
+    exportBtn.className = "ghost tiny day-export-btn day-io-mini-btn";
+    exportBtn.innerHTML = '<span class="day-io-mini-icon" aria-hidden="true">→|</span>';
+    exportBtn.setAttribute("aria-label", "書き出し");
+    exportBtn.setAttribute("title", "書き出し");
+
+    let importBtn = tools.querySelector(".day-import-btn");
+    if (!importBtn) {
+      importBtn = document.createElement("button");
       importBtn.type = "button";
-      importBtn.className = "ghost tiny day-import-btn icon-btn";
-      importBtn.textContent = "↓";
-      importBtn.setAttribute("aria-label", "読み込み");
-      importBtn.setAttribute("title", "読み込み");
-      tools.appendChild(importBtn);
     }
+    importBtn.className = "ghost tiny day-import-btn day-io-mini-btn";
+    importBtn.innerHTML = '<span class="day-io-mini-icon" aria-hidden="true">|←</span>';
+    importBtn.setAttribute("aria-label", "読み込み");
+    importBtn.setAttribute("title", "読み込み");
+
+    let moveUpBtn = tools.querySelector(".day-move-up-btn");
+    if (!moveUpBtn) {
+      moveUpBtn = document.createElement("button");
+      moveUpBtn.type = "button";
+    }
+    moveUpBtn.className = "ghost tiny day-move-up-btn icon-btn";
+    moveUpBtn.textContent = "↑";
+    moveUpBtn.setAttribute("aria-label", "DAYを上へ");
+    moveUpBtn.setAttribute("title", "DAYを上へ");
+
+    let moveDownBtn = tools.querySelector(".day-move-down-btn");
+    if (!moveDownBtn) {
+      moveDownBtn = document.createElement("button");
+      moveDownBtn.type = "button";
+    }
+    moveDownBtn.className = "ghost tiny day-move-down-btn icon-btn";
+    moveDownBtn.textContent = "↓";
+    moveDownBtn.setAttribute("aria-label", "DAYを下へ");
+    moveDownBtn.setAttribute("title", "DAYを下へ");
+
+    let clearBtn = tools.querySelector(".day-clear-btn");
+    if (!clearBtn) {
+      clearBtn = document.createElement("button");
+      clearBtn.type = "button";
+    }
+    clearBtn.className = "ghost tiny day-clear-btn icon-btn";
+    clearBtn.textContent = "C";
+    clearBtn.setAttribute("aria-label", "このDAYをクリア");
+    clearBtn.setAttribute("title", "このDAYをクリア");
+
+    const addBtn = tools.querySelector(".day-card-add");
+    const deleteBtn = tools.querySelector(".day-card-delete");
+    [addBtn, clearBtn, deleteBtn, moveUpBtn, moveDownBtn, exportBtn, importBtn]
+      .filter(Boolean)
+      .forEach((btn) => tools.appendChild(btn));
     if (!card.querySelector(".day-import-file")) {
       const importFile = document.createElement("input");
       importFile.type = "file";
@@ -1947,6 +2214,7 @@ function ensureDayCardAccordionStructure() {
     const dayHeaderTime = card.querySelector("select[data-day-role='day-header-time-select']");
     if (dayHeaderTime) {
       dayHeaderTime.innerHTML = buildHeaderEstimateOptions(state.transportDays[index]?.headerEstimate || "");
+      dayHeaderTime.classList.toggle("is-selected-time", Boolean(String(state.transportDays[index]?.headerEstimate || "").trim()));
     }
   });
   return cards;
@@ -1972,8 +2240,23 @@ function setDayCardOpen(card, isOpen) {
     const dayIndex = Number(card.dataset.dayCardIndex);
     if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
       const day = state.transportDays[dayIndex];
+      if (day) {
+        const hasOriginNote = Boolean((day.originNote || "").trim());
+        day.originNoteExpanded = hasOriginNote ? Boolean(day.originNoteExpanded) : false;
+      }
       if (day && Array.isArray(day.points)) {
-        day.points = day.points.map((point) => ({ ...ensurePointObject(point), expanded: false }));
+        day.points = day.points.map((point) => ({
+          ...(() => {
+            const normalized = ensurePointObject(point);
+            const hasPointNote = Boolean((normalized.note || "").trim());
+            return {
+              ...normalized,
+              noteExpanded: hasPointNote ? Boolean(normalized.noteExpanded) : false,
+            };
+          })(),
+          expanded: false,
+          candidates: [],
+        }));
       }
     }
 
@@ -1984,10 +2267,22 @@ function setDayCardOpen(card, isOpen) {
     card.querySelectorAll("button[data-toggle-point]").forEach((btn) => {
       btn.textContent = "▶";
     });
+
+    if (els.historyEditorModal && card.contains(els.historyEditorModal)) {
+      closeHistoryEditor();
+    }
+    const originInlineEditor = card.querySelector("#origin-inline-editor");
+    if (originInlineEditor && !originInlineEditor.classList.contains("hidden")) {
+      setOriginInlineEditorOpen(false);
+    }
   }
   if (toggle) {
     toggle.textContent = isOpen ? "▼" : "▶";
     toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  }
+  const dayIndex = Number(card.dataset.dayCardIndex);
+  if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+    syncDayCardInputsFromState(dayIndex);
   }
 }
 
@@ -2154,7 +2449,7 @@ function ensureDayCardsMatchStateDays() {
   const daySections = document.getElementById("day-sections");
   if (!daySections) return;
   if (!Array.isArray(state.transportDays) || !state.transportDays.length) {
-    state.transportDays = [{ origin: "", points: [], expanded: true, headerEstimate: "", segmentTimes: {}, completed: false, orderKey: 0 }];
+    state.transportDays = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, headerEstimate: "", segmentTimes: {}, completed: false, orderKey: 0 }];
   }
 
   let cards = Array.from(daySections.querySelectorAll(":scope > .card"));
@@ -2201,6 +2496,82 @@ function removeDaySectionByButton(button) {
   renderRouteList();
   renderTransportDetail();
   setStatus("DAYを削除しました。");
+}
+
+function moveDaySectionByButton(button, delta) {
+  const daySections = document.getElementById("day-sections");
+  if (!daySections) return;
+  const cards = Array.from(daySections.querySelectorAll(":scope > .card"));
+  if (cards.length <= 1) return;
+  const targetCard = button.closest(".card");
+  if (!targetCard) return;
+  const fromIndexRaw = Number(targetCard.dataset.dayCardIndex);
+  const fromIndex =
+    Number.isInteger(fromIndexRaw) && fromIndexRaw >= 0 && fromIndexRaw < state.transportDays.length
+      ? fromIndexRaw
+      : state.activeDayIndex;
+  const toIndex = fromIndex + delta;
+  if (!Number.isInteger(toIndex) || toIndex < 0 || toIndex >= state.transportDays.length) {
+    setStatus("これ以上移動できません。", true);
+    return;
+  }
+
+  const [movedDay] = state.transportDays.splice(fromIndex, 1);
+  state.transportDays.splice(toIndex, 0, movedDay);
+
+  const currentCards = Array.from(daySections.querySelectorAll(":scope > .card"));
+  const movingCard = currentCards[fromIndex];
+  const anchorCard = currentCards[toIndex];
+  if (movingCard && anchorCard) {
+    if (delta < 0) {
+      daySections.insertBefore(movingCard, anchorCard);
+    } else {
+      daySections.insertBefore(movingCard, anchorCard.nextSibling);
+    }
+  }
+
+  renumberDaySectionTitles();
+  refreshAllDayHistoryDropdownCaches();
+  syncAllDayCardsFromState();
+  setActiveDay(toIndex);
+  renderRouteList();
+  renderTransportDetail();
+  setStatus(delta < 0 ? "DAYを上へ移動しました。" : "DAYを下へ移動しました。");
+}
+
+function clearDaySectionByButton(button) {
+  const targetCard = button.closest(".card");
+  if (!targetCard) return;
+  const dayIndexRaw = Number(targetCard.dataset.dayCardIndex);
+  const dayIndex =
+    Number.isInteger(dayIndexRaw) && dayIndexRaw >= 0 && dayIndexRaw < state.transportDays.length
+      ? dayIndexRaw
+      : state.activeDayIndex;
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+
+  const day = state.transportDays[dayIndex];
+  if (!day) return;
+
+  // Cボタンでも戻る操作で復元できるよう、クリア前をUndoへ保存
+  pushUndoCheckpoint(captureTransportUndoSnapshot());
+
+  day.origin = "";
+  day.originNote = "";
+  day.originNoteExpanded = false;
+  day.points = [];
+  day.headerEstimate = "";
+  day.segmentTimes = {};
+  day.completed = false;
+
+  normalizePlanPoints(day);
+  syncDayCardInputsFromState(dayIndex);
+  renderRouteListIntoDayCard(dayIndex);
+  if (dayIndex === state.activeDayIndex) {
+    renderRouteList();
+    renderTransportDetail();
+  }
+  saveTransportState();
+  setStatus(`DAY${getDayDisplayNumber(state.transportDays[dayIndex], dayIndex)}をクリアしました。`);
 }
 
 async function exportSingleDay(card) {
@@ -2270,6 +2641,8 @@ function createAllDaysPayload() {
 function addRouteDay(afterDayIndex = null) {
   const newDay = {
     origin: "",
+    originNote: "",
+    originNoteExpanded: false,
     points: [],
     expanded: false,
     headerEstimate: "",
@@ -2301,6 +2674,12 @@ function deleteRouteDay(dayIndex) {
 function normalizeAllDays() {
   state.transportDays.forEach((day, idx) => {
     normalizePlanPoints(day);
+    if (typeof day.originNote !== "string") {
+      day.originNote = "";
+    }
+    if (typeof day.originNoteExpanded !== "boolean") {
+      day.originNoteExpanded = false;
+    }
     if (typeof day.expanded !== "boolean") {
       day.expanded = idx === 0;
     }
@@ -2396,9 +2775,18 @@ function buildRouteListHtmlForDay(dayIndex) {
         </div>
         <div class="route-waypoint-body ${point.expanded ? "" : "hidden"}">
           <div class="route-history-tools route-waypoint-history-tools">
-            <button type="button" class="ghost tiny" data-open-history="${key}">履歴から</button>
+            <button type="button" class="ghost tiny ${state.activeHistoryDropdownIndex === key ? "history-toggle-active" : ""}" data-open-history="${key}">${state.activeHistoryDropdownIndex === key ? "閉じる" : "履歴"}</button>
             <button type="button" class="tiny origin-edit-btn ${isInlinePlaceEditorOpen(`waypoint:${key}`) ? "origin-edit-active" : ""}" data-edit-history="${key}">${isInlinePlaceEditorOpen(`waypoint:${key}`) ? "✕" : "☰"}</button>
-            <button type="button" class="tiny route-btn-black" data-url-suggest="${dayIndex}:${sourceIndex}">MAPから</button>
+            <button type="button" class="tiny route-btn-black" data-url-suggest="${dayIndex}:${sourceIndex}">MAP</button>
+            <button type="button" class="ghost tiny ${point.noteExpanded ? "note-toggle-active" : ""}" data-toggle-point-note="${dayIndex}:${sourceIndex}">${point.noteExpanded ? "備考閉" : "備考"}</button>
+          </div>
+          <div class="route-waypoint-note ${point.noteExpanded ? "" : "hidden"}">
+            <div class="note-tools">
+              <button type="button" class="ghost tiny" data-note-format="checkbox">チェックボックス</button>
+              <button type="button" class="ghost tiny" data-note-format="list">リスト</button>
+              <button type="button" class="ghost tiny" data-note-clear>クリア</button>
+            </div>
+            <textarea class="route-url-input" data-point-note="${dayIndex}:${sourceIndex}" rows="2" placeholder="経由地備考">${escapeHtml(point.note || "")}</textarea>
           </div>
           <div class="route-history-dropdown ${state.activeHistoryDropdownIndex === key ? "" : "hidden"}">
             ${
@@ -2453,7 +2841,7 @@ function buildRouteListHtmlForDay(dayIndex) {
             : `<button type="button" class="ghost tiny route-segment-disabled-btn" data-open-segment-disabled data-segment-reason="${reason}" disabled>G Map</button>
                <button type="button" class="ghost tiny route-segment-disabled-btn" data-open-segment-yahoo-disabled data-segment-reason="${reason}" disabled>Y Nav</button>`
         }
-        <select class="tiny route-segment-time-select ${canOpen ? "" : "route-segment-time-disabled"}" data-segment-time-select="${dayIndex}:${segmentVisualIndex}" ${canOpen ? "" : "disabled"}>
+        <select class="tiny route-segment-time-select ${manualTimeValue ? "is-selected-time" : ""} ${canOpen ? "" : "route-segment-time-disabled"}" data-segment-time-select="${dayIndex}:${segmentVisualIndex}" ${canOpen ? "" : "disabled"}>
           ${optionsHtml}
         </select>
         <button type="button" class="ghost tiny route-segment-add-btn" data-add-waypoint-at="${dayIndex}:${insertAtIndex}">追加</button>
@@ -2508,6 +2896,7 @@ function renderRouteListIntoDayCard(dayIndex) {
   const routeItemsHtml = buildRouteListHtmlForDay(dayIndex);
   target.classList.remove("muted");
   target.innerHTML = `<ul class="route-items" data-day-dropzone="${dayIndex}">${routeItemsHtml}</ul>`;
+  autoResizeNoteTextareasIn(target);
 }
 
 function renderTransportDetail() {
@@ -2743,6 +3132,83 @@ function parseDayAndIndex(value) {
   return { dayIndex, pointIndex };
 }
 
+function addPrefixToNoteLines(textarea, prefix) {
+  if (!textarea) return;
+  const text = String(textarea.value || "");
+  let start = Number.isInteger(textarea.selectionStart) ? textarea.selectionStart : 0;
+  let end = Number.isInteger(textarea.selectionEnd) ? textarea.selectionEnd : start;
+  if (start > end) [start, end] = [end, start];
+
+  const lineStart = text.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+  const lineEnd = (() => {
+    const idx = text.indexOf("\n", end);
+    return idx === -1 ? text.length : idx;
+  })();
+
+  const target = text.slice(lineStart, lineEnd);
+  const lines = target.split("\n");
+  const replaced = lines.map((line) => `${prefix}${line}`).join("\n");
+  const nextText = text.slice(0, lineStart) + replaced + text.slice(lineEnd);
+  textarea.value = nextText;
+
+  if (start === end) {
+    const nextPos = start + prefix.length;
+    textarea.setSelectionRange(nextPos, nextPos);
+  } else {
+    const beforeStart = text.slice(lineStart, start);
+    const beforeEnd = text.slice(lineStart, end);
+    const startLineCount = beforeStart.split("\n").length;
+    const endLineCount = beforeEnd.split("\n").length;
+    const nextStart = start + startLineCount * prefix.length;
+    const nextEnd = end + endLineCount * prefix.length;
+    textarea.setSelectionRange(nextStart, nextEnd);
+  }
+
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  textarea.focus({ preventScroll: true });
+}
+
+function toggleNoteCheckboxAtCursor(textarea) {
+  if (!textarea) return false;
+  const text = String(textarea.value || "");
+  const pos = Number.isInteger(textarea.selectionStart) ? textarea.selectionStart : 0;
+  const lineStart = text.lastIndexOf("\n", Math.max(0, pos - 1)) + 1;
+  const lineEndIdx = text.indexOf("\n", pos);
+  const lineEnd = lineEndIdx === -1 ? text.length : lineEndIdx;
+  const line = text.slice(lineStart, lineEnd);
+  const col = Math.max(0, pos - lineStart);
+  if (col > 2) return false;
+
+  let replaced = "";
+  if (line.startsWith("☐ ")) {
+    replaced = `☑ ${line.slice(2)}`;
+  } else if (line.startsWith("☑ ")) {
+    replaced = `☐ ${line.slice(2)}`;
+  } else {
+    return false;
+  }
+
+  const nextText = text.slice(0, lineStart) + replaced + text.slice(lineEnd);
+  textarea.value = nextText;
+  const nextPos = lineStart + Math.min(col, replaced.length);
+  textarea.setSelectionRange(nextPos, nextPos);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}
+
+function autoResizeNoteTextarea(textarea) {
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
+function autoResizeNoteTextareasIn(container) {
+  if (!container) return;
+  container
+    .querySelectorAll("textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note']")
+    .forEach((textarea) => autoResizeNoteTextarea(textarea));
+}
+
 function rerenderRouteListKeepingPointFocus(pointKey, selectionStart = null, selectionEnd = null) {
   renderRouteList();
   renderTransportDetail();
@@ -2830,7 +3296,196 @@ if (deleteRouteDayBtn) {
   });
 }
 
+function undoLastTransportAction() {
+  let snapshot = state.undoStack.pop();
+  if (!snapshot || !Array.isArray(snapshot.transportDays)) {
+    const backupDaysRaw = localStorage.getItem("ntt-transport-days-prev");
+    const backupActiveRaw = localStorage.getItem("ntt-active-day-index-prev");
+    if (backupDaysRaw) {
+      try {
+        const backupDays = JSON.parse(backupDaysRaw);
+        if (Array.isArray(backupDays) && backupDays.length) {
+          snapshot = {
+            transportDays: backupDays,
+            activeDayIndex: Number.isInteger(Number(backupActiveRaw)) ? Number(backupActiveRaw) : 0,
+          };
+        }
+      } catch {
+        // noop
+      }
+    }
+  }
+  if (!snapshot || !Array.isArray(snapshot.transportDays)) {
+    setStatus("戻せる操作がありません。", true);
+    return;
+  }
+
+  state.isApplyingUndo = true;
+  state.undoTypingSessionKey = "";
+  state.transportDays = snapshot.transportDays.map((day, idx) => {
+    const normalized = {
+      origin: typeof day?.origin === "string" ? day.origin : "",
+      originNote: typeof day?.originNote === "string" ? day.originNote : "",
+      originNoteExpanded: Boolean(day?.originNoteExpanded),
+      points: Array.isArray(day?.points) ? day.points.map(ensurePointObject) : [],
+      expanded: typeof day?.expanded === "boolean" ? day.expanded : idx === 0,
+      headerEstimate: typeof day?.headerEstimate === "string" ? day.headerEstimate : "",
+      segmentTimes:
+        day?.segmentTimes && typeof day.segmentTimes === "object" && !Array.isArray(day.segmentTimes)
+          ? day.segmentTimes
+          : {},
+      completed: typeof day?.completed === "boolean" ? day.completed : false,
+      orderKey: Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx,
+    };
+    normalizePlanPoints(normalized);
+    return normalized;
+  });
+  if (!state.transportDays.length) {
+    state.transportDays = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, segmentTimes: {}, completed: false, orderKey: 0 }];
+  }
+  const nextActive = Number(snapshot.activeDayIndex);
+  state.activeDayIndex =
+    Number.isInteger(nextActive) && nextActive >= 0 && nextActive < state.transportDays.length
+      ? nextActive
+      : 0;
+
+  ensureDayCardsMatchStateDays();
+  renumberDaySectionTitles();
+  refreshAllDayHistoryDropdownCaches();
+  syncAllDayCardsFromState();
+  const cards = ensureDayCardAccordionStructure();
+  cards.forEach((card, idx) => {
+    setDayCardOpen(card, idx === state.activeDayIndex);
+  });
+  setActiveDay(state.activeDayIndex);
+  renderRouteList();
+  renderTransportDetail();
+
+  const currentSnapshot = captureTransportUndoSnapshot();
+  state.lastUndoSnapshot = currentSnapshot;
+  state.lastUndoSignature = JSON.stringify(currentSnapshot);
+  state.lastUndoDaysSignature = JSON.stringify(currentSnapshot.transportDays);
+  state.lastUndoPushAt = Date.now();
+  saveTransportState();
+  state.isApplyingUndo = false;
+  setStatus("1つ前の操作に戻しました。");
+}
+
+if (els.undoActionBtn) {
+  els.undoActionBtn.addEventListener("click", () => {
+    undoLastTransportAction();
+  });
+}
+
+function updateUndoButtonViewportPosition() {
+  if (!els.undoActionBtn) return;
+  const baseBottom = 14;
+  const viewport = window.visualViewport;
+  if (!viewport) {
+    els.undoActionBtn.style.bottom = `${baseBottom}px`;
+    return;
+  }
+  const keyboardOverlap = Math.max(0, window.innerHeight - (viewport.height + viewport.offsetTop));
+  const nextBottom = baseBottom + keyboardOverlap;
+  els.undoActionBtn.style.bottom = `${nextBottom}px`;
+}
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", updateUndoButtonViewportPosition);
+  window.visualViewport.addEventListener("scroll", updateUndoButtonViewportPosition);
+}
+window.addEventListener("resize", updateUndoButtonViewportPosition);
+window.addEventListener("orientationchange", updateUndoButtonViewportPosition);
+document.addEventListener("focusin", updateUndoButtonViewportPosition);
+document.addEventListener("focusout", () => {
+  setTimeout(updateUndoButtonViewportPosition, 120);
+});
+
 document.addEventListener("click", (e) => {
+  const noteClearBtn = e.target.closest("button[data-note-clear]");
+  if (noteClearBtn) {
+    const tools = noteClearBtn.closest(".note-tools");
+    const wrap = tools ? tools.parentElement : null;
+    const textarea = wrap ? wrap.querySelector("textarea") : null;
+    if (!textarea) return;
+    if (!String(textarea.value || "").length) return;
+    pushUndoCheckpoint(captureTransportUndoSnapshot());
+    textarea.value = "";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.focus({ preventScroll: true });
+    setStatus("備考をクリアしました。");
+    return;
+  }
+
+  const noteFormatBtn = e.target.closest("button[data-note-format]");
+  if (noteFormatBtn) {
+    const mode = noteFormatBtn.dataset.noteFormat;
+    const prefix = mode === "checkbox" ? "☐ " : mode === "list" ? "・" : "";
+    if (!prefix) return;
+    const tools = noteFormatBtn.closest(".note-tools");
+    const wrap = tools ? tools.parentElement : null;
+    const textarea = wrap ? wrap.querySelector("textarea") : null;
+    if (!textarea) return;
+    addPrefixToNoteLines(textarea, prefix);
+    return;
+  }
+
+  const originNoteToggleBtn = e.target.closest("button[data-day-role='origin-note-toggle']");
+  if (originNoteToggleBtn) {
+    const card = originNoteToggleBtn.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+    const day = state.transportDays[dayIndex];
+    day.originNoteExpanded = !day.originNoteExpanded;
+    syncDayCardInputsFromState(dayIndex);
+    saveTransportState();
+    return;
+  }
+
+  const destinationNoteToggleBtn = e.target.closest("button[data-day-role='destination-note-toggle']");
+  if (destinationNoteToggleBtn) {
+    const card = destinationNoteToggleBtn.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+    const day = state.transportDays[dayIndex];
+    normalizePlanPoints(day);
+    let destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+    if (destinationIndex < 0) {
+      day.points.push({
+        name: "",
+        url: "",
+        note: "",
+        noteExpanded: false,
+        candidates: [],
+        isDestination: true,
+        expanded: false,
+      });
+      normalizePlanPoints(day);
+      destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+    }
+    if (destinationIndex >= 0) {
+      const current = ensurePointObject(day.points[destinationIndex]);
+      day.points[destinationIndex] = { ...current, noteExpanded: !current.noteExpanded };
+    }
+    syncDayCardInputsFromState(dayIndex);
+    if (dayIndex === state.activeDayIndex) {
+      renderRouteList();
+      renderTransportDetail();
+    } else {
+      renderRouteListIntoDayCard(dayIndex);
+    }
+    saveTransportState();
+    return;
+  }
+
+  const noteArea = e.target.closest(
+    "textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note]",
+  );
+  if (noteArea) {
+    toggleNoteCheckboxAtCursor(noteArea);
+    return;
+  }
+
   const dayFullRouteBtn = e.target.closest("button[data-open-day-full-route]");
   if (dayFullRouteBtn) {
     const card = dayFullRouteBtn.closest(".card");
@@ -2876,12 +3531,70 @@ document.addEventListener("click", (e) => {
     sectionToggleBtn.textContent = nextOpen ? "▼" : "▶";
     sectionToggleBtn.classList.toggle("is-open", nextOpen);
     sectionToggleBtn.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+    if (!nextOpen) {
+      const card = sectionToggleBtn.closest(".card");
+      const dayIndex = Number(card?.dataset.dayCardIndex);
+      const day =
+        Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length
+          ? state.transportDays[dayIndex]
+          : null;
+      if (day && block && block.querySelector("input[data-day-role='origin-input']")) {
+        const hasOriginNote = Boolean((day.originNote || "").trim());
+        day.originNoteExpanded = hasOriginNote ? Boolean(day.originNoteExpanded) : false;
+      }
+      if (day && block && block.querySelector("input[data-day-role='destination-input']")) {
+        normalizePlanPoints(day);
+        const destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+        if (destinationIndex >= 0) {
+          const currentDestination = ensurePointObject(day.points[destinationIndex]);
+          const hasDestinationNote = Boolean((currentDestination.note || "").trim());
+          day.points[destinationIndex] = {
+            ...currentDestination,
+            noteExpanded: hasDestinationNote ? Boolean(currentDestination.noteExpanded) : false,
+          };
+        }
+      }
+      if (els.historyEditorModal && block && block.contains(els.historyEditorModal)) {
+        closeHistoryEditor();
+      }
+      const originInlineEditor = block ? block.querySelector("#origin-inline-editor") : null;
+      if (originInlineEditor && !originInlineEditor.classList.contains("hidden")) {
+        setOriginInlineEditorOpen(false);
+      }
+      if (block && block.querySelector("input[data-day-role='destination-input']")) {
+        state.destinationNameCandidates = [];
+        state.destinationUrlCandidates = [];
+        renderDestinationNameCandidates();
+        renderDestinationUrlCandidates();
+      }
+      if (block && block.querySelector("input[data-day-role='origin-input']")) {
+        state.originUrlCandidates = [];
+        renderOriginUrlCandidates();
+      }
+    }
+    const card = sectionToggleBtn.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+      syncDayCardInputsFromState(dayIndex);
+    }
     return;
   }
 
   const dayExportBtn = e.target.closest(".day-export-btn");
   if (dayExportBtn) {
     exportSingleDay(dayExportBtn.closest(".card"));
+    return;
+  }
+
+  const dayMoveUpBtn = e.target.closest(".day-move-up-btn");
+  if (dayMoveUpBtn) {
+    moveDaySectionByButton(dayMoveUpBtn, -1);
+    return;
+  }
+
+  const dayMoveDownBtn = e.target.closest(".day-move-down-btn");
+  if (dayMoveDownBtn) {
+    moveDaySectionByButton(dayMoveDownBtn, 1);
     return;
   }
 
@@ -2912,6 +3625,11 @@ document.addEventListener("click", (e) => {
     renderTransportDetail();
     return;
   }
+  const clearBtn = e.target.closest(".day-clear-btn");
+  if (clearBtn) {
+    clearDaySectionByButton(clearBtn);
+    return;
+  }
   const deleteBtn = e.target.closest(".day-card-delete");
   if (deleteBtn && !deleteBtn.id) {
     removeDaySectionByButton(deleteBtn);
@@ -2940,6 +3658,7 @@ document.addEventListener("change", async (e) => {
     const dayIndex = card ? Number(card.dataset.dayCardIndex) : NaN;
     if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
       state.transportDays[dayIndex].headerEstimate = String(dayHeaderTimeSelect.value || "");
+      dayHeaderTimeSelect.classList.toggle("is-selected-time", Boolean(dayHeaderTimeSelect.value));
       saveTransportState();
     }
     return;
@@ -3127,6 +3846,20 @@ if (els.originInlineSelectAll) {
     renderOriginInlineEditor();
   });
 }
+
+if (els.originInlineClearAll) {
+  els.originInlineClearAll.addEventListener("click", () => {
+    state.originInlineChecks = {};
+    renderOriginInlineEditor();
+  });
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("#origin-inline-clear-all");
+  if (!btn) return;
+  state.originInlineChecks = {};
+  renderOriginInlineEditor();
+});
 
 if (els.originInlineDeleteSelected) {
   els.originInlineDeleteSelected.addEventListener("click", () => {
@@ -3358,7 +4091,15 @@ document.addEventListener("click", (e) => {
           const current = ensurePointObject(day.points[destinationIndex]);
           day.points[destinationIndex] = { ...current, name: value.trim(), isDestination: true };
         } else {
-          day.points.push({ name: value.trim(), url: "", candidates: [], isDestination: true, expanded: false });
+          day.points.push({
+            name: value.trim(),
+            url: "",
+            note: "",
+            noteExpanded: false,
+            candidates: [],
+            isDestination: true,
+            expanded: false,
+          });
           normalizePlanPoints(day);
         }
       }
@@ -3412,6 +4153,48 @@ document.addEventListener("input", (e) => {
   updateDestinationByInputElement(destinationInput, { render: true, saveHistory: false });
 });
 
+document.addEventListener("input", (e) => {
+  const originNoteInput = e.target.closest("textarea[data-day-role='origin-note-input']");
+  if (originNoteInput) {
+    autoResizeNoteTextarea(originNoteInput);
+    const card = originNoteInput.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+    state.transportDays[dayIndex].originNote = originNoteInput.value || "";
+    saveTransportState();
+    return;
+  }
+
+  const destinationNoteInput = e.target.closest("textarea[data-day-role='destination-note-input']");
+  if (destinationNoteInput) {
+    autoResizeNoteTextarea(destinationNoteInput);
+    const card = destinationNoteInput.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+    const day = state.transportDays[dayIndex];
+    normalizePlanPoints(day);
+    let destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+    if (destinationIndex < 0) {
+      day.points.push({
+        name: "",
+        url: "",
+        note: "",
+        noteExpanded: true,
+        candidates: [],
+        isDestination: true,
+        expanded: false,
+      });
+      normalizePlanPoints(day);
+      destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+    }
+    if (destinationIndex >= 0) {
+      const current = ensurePointObject(day.points[destinationIndex]);
+      day.points[destinationIndex] = { ...current, note: destinationNoteInput.value || "" };
+    }
+    saveTransportState();
+  }
+});
+
 document.addEventListener("change", (e) => {
   const destinationInput = e.target.closest("input[data-day-role='destination-input']");
   if (!destinationInput) return;
@@ -3433,6 +4216,41 @@ document.addEventListener("focusin", (e) => {
   if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
   if (dayIndex === state.activeDayIndex) return;
   setActiveDay(dayIndex);
+});
+
+document.addEventListener("focusin", (e) => {
+  const textField = e.target.closest(
+    "textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note], input[data-day-role='origin-input'], input[data-day-role='destination-input'], input[data-point-input], input[data-point-url]",
+  );
+  if (!textField) return;
+  const card = textField.closest(".card");
+  const dayIndex = Number(card?.dataset.dayCardIndex);
+  const dayPart = Number.isInteger(dayIndex) ? `day:${dayIndex}` : "day:-1";
+  const fieldPart =
+    textField.dataset.pointNote ||
+    textField.dataset.pointInput ||
+    textField.dataset.pointUrl ||
+    textField.dataset.dayRole ||
+    textField.id ||
+    "";
+  const key = `${dayPart}:${fieldPart}`;
+  if (!key) return;
+  if (state.undoTypingSessionKey === key) return;
+  state.undoTypingSessionKey = key;
+  const current = captureTransportUndoSnapshot();
+  state.lastUndoSnapshot = current;
+  state.lastUndoSignature = JSON.stringify(current);
+  state.lastUndoDaysSignature = JSON.stringify(current.transportDays);
+  pushUndoCheckpoint(current);
+});
+
+document.addEventListener("focusout", (e) => {
+  const textField = e.target.closest(
+    "textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note], input[data-day-role='origin-input'], input[data-day-role='destination-input'], input[data-point-input], input[data-point-url]",
+  );
+  if (!textField) return;
+  state.undoTypingSessionKey = "";
+  state.lastUndoPushAt = Date.now();
 });
 
 if (els.exportAllDaysBtn) {
@@ -3533,8 +4351,38 @@ els.routeList.addEventListener("click", (e) => {
     setActiveDay(dayIndex);
     if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= state.transportPlan.points.length) return;
     const current = ensurePointObject(state.transportPlan.points[pointIndex]);
-    state.transportPlan.points[pointIndex] = { ...current, expanded: !current.expanded };
+    const nextExpanded = !current.expanded;
+    const pointKey = `${dayIndex}:${pointIndex}`;
+    if (!nextExpanded) {
+      if (state.activeHistoryDropdownIndex === pointKey) {
+        state.activeHistoryDropdownIndex = null;
+      }
+      if (
+        state.historyEditorTarget === "place" &&
+        state.historyEditorAnchorKey === `waypoint:${pointKey}`
+      ) {
+        closeHistoryEditor();
+      }
+    }
+    state.transportPlan.points[pointIndex] = {
+      ...current,
+      expanded: nextExpanded,
+      noteExpanded: nextExpanded ? current.noteExpanded : (current.note || "").trim() ? current.noteExpanded : false,
+      candidates: nextExpanded ? current.candidates : [],
+    };
     renderRouteList();
+    return;
+  }
+
+  const togglePointNoteBtn = e.target.closest("button[data-toggle-point-note]");
+  if (togglePointNoteBtn) {
+    const { dayIndex, pointIndex } = parseDayAndIndex(togglePointNoteBtn.dataset.togglePointNote);
+    setActiveDay(dayIndex);
+    if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= state.transportPlan.points.length) return;
+    const current = ensurePointObject(state.transportPlan.points[pointIndex]);
+    state.transportPlan.points[pointIndex] = { ...current, noteExpanded: !current.noteExpanded };
+    renderRouteList();
+    saveTransportState();
     return;
   }
 
@@ -3837,6 +4685,21 @@ els.routeList.addEventListener("input", (e) => {
     } else {
       renderTransportDetail();
     }
+    saveTransportState();
+    return;
+  }
+
+  const noteInput = e.target.closest("textarea[data-point-note]");
+  if (noteInput) {
+    autoResizeNoteTextarea(noteInput);
+    const { dayIndex, pointIndex } = parseDayAndIndex(noteInput.dataset.pointNote);
+    const day = state.transportDays[dayIndex];
+    if (!day) return;
+    normalizePlanPoints(day);
+    if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= day.points.length) return;
+    const current = ensurePointObject(day.points[pointIndex]);
+    day.points[pointIndex] = { ...current, note: noteInput.value || "" };
+    saveTransportState();
     return;
   }
 
@@ -3849,6 +4712,7 @@ els.routeList.addEventListener("input", (e) => {
   state.transportPlan.points[pointIndex] = { ...current, url: urlInput.value, candidates: [] };
   normalizeRoutePoints();
   renderTransportDetail();
+  saveTransportState();
 });
 
 els.routeList.addEventListener("change", (e) => {
@@ -3872,6 +4736,7 @@ els.routeList.addEventListener("change", (e) => {
   if (segmentTimeSelect) {
     const { dayIndex, pointIndex } = parseDayAndIndex(segmentTimeSelect.dataset.segmentTimeSelect);
     setSegmentManualTime(dayIndex, pointIndex, segmentTimeSelect.value);
+    segmentTimeSelect.classList.toggle("is-selected-time", Boolean(segmentTimeSelect.value));
     saveTransportState();
     setStatus(segmentTimeSelect.value ? "区間の手動時間を保存しました。" : "区間の手動時間をクリアしました。");
     return;
@@ -3901,6 +4766,7 @@ els.routeList.addEventListener("compositionend", (e) => {
   const selStart = nameInput.selectionStart;
   const selEnd = nameInput.selectionEnd;
   rerenderRouteListKeepingPointFocus(key, selStart, selEnd);
+  saveTransportState();
 });
 
 els.routeList.addEventListener("dragstart", (e) => {
@@ -3988,6 +4854,7 @@ els.routeList.addEventListener("drop", (e) => {
   }
   renderRouteList();
   renderTransportDetail();
+  saveTransportState();
   setStatus("ドラッグでルートを更新しました。");
 });
 
@@ -4041,6 +4908,20 @@ els.historySelectAll.addEventListener("click", () => {
   state.historyEditorChecks = Object.fromEntries(
     list.map((item) => [state.historyEditorTarget === "hotelUrl" ? item.url : item, true]),
   );
+  renderHistoryEditorList();
+});
+
+if (els.historyClearAll) {
+  els.historyClearAll.addEventListener("click", () => {
+    state.historyEditorChecks = {};
+    renderHistoryEditorList();
+  });
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("#history-clear-all");
+  if (!btn) return;
+  state.historyEditorChecks = {};
   renderHistoryEditorList();
 });
 
@@ -4133,16 +5014,25 @@ if (els.clearAll) {
   els.clearAll.addEventListener("click", () => {
   state.hotels = [];
   state.selectedHotel = null;
-  state.transportDays = [{ origin: "", points: [], expanded: true, segmentTimes: {}, completed: false, orderKey: 0 }];
+  state.transportDays = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, segmentTimes: {}, completed: false, orderKey: 0 }];
   state.activeDayIndex = 0;
   state.draggedPointIndex = null;
   state.draggedDayIndex = null;
   state.spots = [];
   state.history = [];
+  state.undoStack = [];
+  state.lastUndoSnapshot = null;
+  state.lastUndoSignature = "";
+  state.lastUndoDaysSignature = "";
+  state.lastUndoPushAt = 0;
+  state.undoTypingSessionKey = "";
+  state.isApplyingUndo = false;
 
   localStorage.removeItem("ntt-history");
   localStorage.removeItem("ntt-transport-days");
   localStorage.removeItem("ntt-active-day-index");
+  localStorage.removeItem("ntt-transport-days-prev");
+  localStorage.removeItem("ntt-active-day-index-prev");
 
   els.transportForm.reset();
 
@@ -4159,6 +5049,7 @@ if (els.clearAll) {
 }
 
 function init() {
+  ensureHistoryClearButtons();
   normalizeStoredHistories();
   normalizeAllDays();
   sortDaysByCompletionAndOrder();
@@ -4196,7 +5087,16 @@ function init() {
   renderTransportDetail();
   renderSpots();
   renderHistory();
+  autoResizeNoteTextareasIn(document);
   syncPlaceInlineEditorButtons();
+  updateUndoButtonViewportPosition();
+  state.undoStack = [];
+  state.lastUndoSnapshot = captureTransportUndoSnapshot();
+  state.lastUndoSignature = JSON.stringify(state.lastUndoSnapshot);
+  state.lastUndoDaysSignature = JSON.stringify(state.lastUndoSnapshot.transportDays);
+  state.lastUndoPushAt = Date.now();
+  state.undoTypingSessionKey = "";
+  state.isApplyingUndo = false;
   setStatus("");
 }
 
