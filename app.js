@@ -3102,34 +3102,43 @@ document.addEventListener("submit", (e) => {
 
 els.hotelSort.addEventListener("change", renderHotelResults);
 
-els.hotelResults.addEventListener("click", (e) => {
+function handleHotelResultsClick(e, nonPrimaryOnly = false) {
+  const host = e.target.closest("[data-day-role='hotel-results']");
+  if (!host) return false;
+  if (nonPrimaryOnly && host.id === "hotel-results") return false;
+  const card = host.closest(".card");
+  const dayIndex = Number(card?.dataset.dayCardIndex);
+  if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+    setActiveDay(dayIndex);
+  }
+
   const toggleBtn = e.target.closest("button[data-toggle-hotel-panel]");
   if (toggleBtn) {
     const hotelId = toggleBtn.dataset.toggleHotelPanel;
-    if (!hotelId) return;
+    if (!hotelId) return true;
     state.hotelExpanded[hotelId] = !state.hotelExpanded[hotelId];
     renderHotelResults();
-    return;
+    return true;
   }
 
   const setBtn = e.target.closest("button[data-set-hotel-destination]");
   if (setBtn) {
     const hotelId = setBtn.dataset.setHotelDestination;
     const selected = state.hotels.find((h) => h.id === hotelId);
-    if (!selected) return;
+    if (!selected) return true;
     state.selectedHotel = selected;
     syncDestinationWithHotel(selected);
     renderHotelResults();
     renderSelectedHotel();
     setStatus(`目的地を「${selected.name}」に設定しました。`);
-    return;
+    return true;
   }
 
   const deleteBtn = e.target.closest("button[data-delete-hotel]");
-  if (!deleteBtn) return;
+  if (!deleteBtn) return false;
   const hotelId = deleteBtn.dataset.deleteHotel;
   const target = state.hotels.find((h) => h.id === hotelId);
-  if (!target) return;
+  if (!target) return true;
 
   state.hotels = state.hotels.filter((h) => h.id !== hotelId);
   delete state.hotelExpanded[hotelId];
@@ -3140,6 +3149,17 @@ els.hotelResults.addEventListener("click", (e) => {
   renderHotelResults();
   renderSelectedHotel();
   setStatus(`「${target.name}」を削除しました。`);
+  return true;
+}
+
+els.hotelResults.addEventListener("click", (e) => {
+  if (handleHotelResultsClick(e)) {
+    return;
+  }
+});
+
+document.addEventListener("click", (e) => {
+  handleHotelResultsClick(e, true);
 });
 
 if (els.selectedHotel) {
@@ -3181,10 +3201,27 @@ els.hotelResults.addEventListener("click", (e) => {
   }
 });
 
-els.hotelResults.addEventListener("change", (e) => {
+function handleHotelResultsNameChange(e, nonPrimaryOnly = false) {
+  const host = e.target.closest("[data-day-role='hotel-results']");
+  if (!host) return false;
+  if (nonPrimaryOnly && host.id === "hotel-results") return false;
   const input = e.target.closest("input[data-hotel-name-input]");
-  if (!input) return;
+  if (!input) return false;
+  const card = host.closest(".card");
+  const dayIndex = Number(card?.dataset.dayCardIndex);
+  if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+    setActiveDay(dayIndex);
+  }
   updateHotelNameById(input.dataset.hotelNameInput, input.value);
+  return true;
+}
+
+els.hotelResults.addEventListener("change", (e) => {
+  handleHotelResultsNameChange(e);
+});
+
+document.addEventListener("change", (e) => {
+  handleHotelResultsNameChange(e, true);
 });
 
 function handleAddRoutePoint(targetDayIndex = state.activeDayIndex, insertAtIndex = null) {
@@ -3478,8 +3515,6 @@ if (els.undoActionBtn) {
   });
 }
 
-let undoViewportBaseHeight = Math.max(window.innerHeight || 0, window.visualViewport?.height || 0);
-
 function isTextEditingFocused() {
   const el = document.activeElement;
   if (!el) return false;
@@ -3492,25 +3527,17 @@ function isTextEditingFocused() {
 function updateUndoButtonViewportPosition() {
   if (!els.undoActionBtn) return;
   const baseBottom = 14;
+  const keyboardGap = 8;
   const viewport = window.visualViewport;
   if (!viewport) {
     els.undoActionBtn.style.bottom = `${baseBottom}px`;
     return;
   }
-  const layoutHeight = Math.max(window.innerHeight || 0, document.documentElement?.clientHeight || 0);
+  const layoutHeight = Math.max(document.documentElement?.clientHeight || 0, window.innerHeight || 0);
   const focusedEditing = isTextEditingFocused();
-
-  // キーボードが閉じている時の高さを基準として保持
-  if (!focusedEditing) {
-    undoViewportBaseHeight = Math.max(undoViewportBaseHeight, layoutHeight, viewport.height + viewport.offsetTop);
-  }
-
-  const baseline = Math.max(undoViewportBaseHeight, layoutHeight);
   const vvBottom = viewport.height + viewport.offsetTop;
-  const overlapByBaseline = Math.max(0, baseline - vvBottom);
-  const overlapByLayout = Math.max(0, layoutHeight - vvBottom);
-  const keyboardOverlap = focusedEditing ? Math.max(overlapByBaseline, overlapByLayout) : 0;
-  const nextBottom = baseBottom + keyboardOverlap;
+  const keyboardOverlap = focusedEditing ? Math.max(0, layoutHeight - vvBottom) : 0;
+  const nextBottom = keyboardOverlap > 0 ? keyboardOverlap + keyboardGap : baseBottom;
   els.undoActionBtn.style.bottom = `${nextBottom}px`;
 }
 
@@ -4202,29 +4229,37 @@ document.addEventListener("click", (e) => {
   }
 
   if (target === "destination") {
-    const destinationInput = card.querySelector("input[data-day-role='destination-input']");
-    if (destinationInput) {
-      destinationInput.value = value;
-      updateDestinationByInputElement(destinationInput, { render: false, saveHistory: false });
+    const hotel = ensureHotelInListFromHistoryName(value);
+    if (hotel) {
+      state.selectedHotel = hotel;
+      syncDestinationWithHotel(hotel);
+      renderHotelResults();
+      renderSelectedHotel();
     } else {
-      const day = state.transportDays[dayIndex];
-      if (day) {
-        normalizePlanPoints(day);
-        const destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
-        if (destinationIndex >= 0) {
-          const current = ensurePointObject(day.points[destinationIndex]);
-          day.points[destinationIndex] = { ...current, name: value.trim(), isDestination: true };
-        } else {
-          day.points.push({
-            name: value.trim(),
-            url: "",
-            note: "",
-            noteExpanded: false,
-            candidates: [],
-            isDestination: true,
-            expanded: false,
-          });
+      const destinationInput = card.querySelector("input[data-day-role='destination-input']");
+      if (destinationInput) {
+        destinationInput.value = value;
+        updateDestinationByInputElement(destinationInput, { render: false, saveHistory: false });
+      } else {
+        const day = state.transportDays[dayIndex];
+        if (day) {
           normalizePlanPoints(day);
+          const destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+          if (destinationIndex >= 0) {
+            const current = ensurePointObject(day.points[destinationIndex]);
+            day.points[destinationIndex] = { ...current, name: value.trim(), isDestination: true };
+          } else {
+            day.points.push({
+              name: value.trim(),
+              url: "",
+              note: "",
+              noteExpanded: false,
+              candidates: [],
+              isDestination: true,
+              expanded: false,
+            });
+            normalizePlanPoints(day);
+          }
         }
       }
     }
