@@ -575,6 +575,17 @@ function openMapPicker(url = "https://www.google.com/maps") {
   return false;
 }
 
+function openExternalUrl(url) {
+  if (!url) return;
+  if (isMobileDevice()) {
+    window.location.href = url;
+    return;
+  }
+  const popup = window.open(url, "_blank", "noopener,noreferrer");
+  if (popup) return;
+  window.location.href = url;
+}
+
 function extractLatLng(text) {
   const value = String(text || "");
   const currentMatch = value.match(/現在地\(\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\)/);
@@ -1716,7 +1727,7 @@ function syncDestinationFromInput(destinationName, options = {}) {
 }
 
 function updateDestinationByInputElement(inputEl, options = {}) {
-  const { render = false, saveHistory = false } = options;
+  const { render = false, saveHistory = false, save = true } = options;
   const card = inputEl.closest(".card");
   const dayIndexRaw = card ? Number(card.dataset.dayCardIndex) : NaN;
   const dayIndex = Number.isInteger(dayIndexRaw) ? dayIndexRaw : state.activeDayIndex;
@@ -1727,6 +1738,8 @@ function updateDestinationByInputElement(inputEl, options = {}) {
   const normalized = (inputEl.value || "").trim();
   normalizePlanPoints(day);
   const destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+  const prevDestinationName =
+    destinationIndex >= 0 ? (ensurePointObject(day.points[destinationIndex]).name || "").trim() : "";
   if (!normalized) {
     if (destinationIndex >= 0) {
       day.points.splice(destinationIndex, 1);
@@ -1756,6 +1769,18 @@ function updateDestinationByInputElement(inputEl, options = {}) {
       const linkedHotel = state.hotels.find((hotel) => (hotel.url || "").trim() === linkedUrl);
       if (linkedHotel && linkedHotel.name !== normalized) {
         updateHotelNameById(linkedHotel.id, normalized, { silent: true, skipDestinationSync: true });
+      } else if (!linkedHotel) {
+        // URL履歴だけ残っているケース（再読み込み後など）でも履歴名を同期する
+        const urlHistoryEntry = (state.hotelUrlHistory || []).find(
+          (entry) => (entry?.url || "").trim() === linkedUrl,
+        );
+        const prevHistoryName = (urlHistoryEntry?.name || prevDestinationName || "").trim();
+        renameHotelUrlHistoryEntry(linkedUrl, normalized);
+        if (prevHistoryName && prevHistoryName !== normalized) {
+          replacePlaceHistoryName(prevHistoryName, normalized);
+        } else {
+          savePlaceHistory(normalized);
+        }
       }
     }
   }
@@ -1764,15 +1789,21 @@ function updateDestinationByInputElement(inputEl, options = {}) {
     if (render) {
       renderRouteList();
       renderTransportDetail();
-      saveTransportState();
+      if (save) {
+        saveTransportState();
+      }
       return;
     }
-    saveTransportState();
+    if (save) {
+      saveTransportState();
+    }
     return;
   }
   syncDayCardInputsFromState(dayIndex);
   renderRouteListIntoDayCard(dayIndex);
-  saveTransportState();
+  if (save) {
+    saveTransportState();
+  }
 }
 
 function moveRoutePoint(fromIndex, toIndex) {
@@ -3131,7 +3162,7 @@ els.hotelResults.addEventListener("click", (e) => {
       return;
     }
     const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
-    window.open(searchUrl, "_blank", "noopener,noreferrer");
+    openExternalUrl(searchUrl);
     return;
   }
 
@@ -3287,32 +3318,46 @@ els.transportForm.addEventListener("submit", (e) => {
   handleAddRoutePoint();
 });
 
-function updateOriginByInputElement(inputEl) {
+function updateOriginByInputElement(inputEl, options = {}) {
+  const { render = true, save = true } = options;
   const card = inputEl.closest(".card");
   const dayIndexRaw = card ? Number(card.dataset.dayCardIndex) : NaN;
   const dayIndex = Number.isInteger(dayIndexRaw) ? dayIndexRaw : state.activeDayIndex;
   if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
   state.transportDays[dayIndex].origin = inputEl.value.trim();
-  renderRouteListIntoDayCard(dayIndex);
+  if (render) {
+    renderRouteListIntoDayCard(dayIndex);
+  }
   if (dayIndex === state.activeDayIndex) {
-    renderRouteList();
-    renderTransportDetail();
+    if (render) {
+      renderRouteList();
+      renderTransportDetail();
+    }
+    if (save) {
+      saveTransportState();
+    }
     return;
   }
   syncDayCardInputsFromState(dayIndex);
-  renderRouteListIntoDayCard(dayIndex);
-  saveTransportState();
+  if (render) {
+    renderRouteListIntoDayCard(dayIndex);
+  }
+  if (save) {
+    saveTransportState();
+  }
 }
 
 document.addEventListener("input", (e) => {
   const originInput = e.target.closest("input[list='origin-history']");
   if (!originInput) return;
-  updateOriginByInputElement(originInput);
+  const isComposing = Boolean(e.isComposing || (e.inputType && e.inputType.includes("Composition")));
+  updateOriginByInputElement(originInput, { render: !isComposing, save: !isComposing });
 });
 
 document.addEventListener("change", (e) => {
   const originInput = e.target.closest("input[list='origin-history']");
   if (!originInput) return;
+  updateOriginByInputElement(originInput, { render: true, save: true });
   saveOriginHistory(originInput.value);
 });
 
@@ -3433,6 +3478,17 @@ if (els.undoActionBtn) {
   });
 }
 
+let undoViewportBaseHeight = Math.max(window.innerHeight || 0, window.visualViewport?.height || 0);
+
+function isTextEditingFocused() {
+  const el = document.activeElement;
+  if (!el) return false;
+  if (el.tagName === "TEXTAREA") return true;
+  if (el.tagName !== "INPUT") return false;
+  const type = (el.getAttribute("type") || "text").toLowerCase();
+  return ["text", "search", "url", "tel", "email", "password", "number"].includes(type);
+}
+
 function updateUndoButtonViewportPosition() {
   if (!els.undoActionBtn) return;
   const baseBottom = 14;
@@ -3441,7 +3497,19 @@ function updateUndoButtonViewportPosition() {
     els.undoActionBtn.style.bottom = `${baseBottom}px`;
     return;
   }
-  const keyboardOverlap = Math.max(0, window.innerHeight - (viewport.height + viewport.offsetTop));
+  const layoutHeight = Math.max(window.innerHeight || 0, document.documentElement?.clientHeight || 0);
+  const focusedEditing = isTextEditingFocused();
+
+  // キーボードが閉じている時の高さを基準として保持
+  if (!focusedEditing) {
+    undoViewportBaseHeight = Math.max(undoViewportBaseHeight, layoutHeight, viewport.height + viewport.offsetTop);
+  }
+
+  const baseline = Math.max(undoViewportBaseHeight, layoutHeight);
+  const vvBottom = viewport.height + viewport.offsetTop;
+  const overlapByBaseline = Math.max(0, baseline - vvBottom);
+  const overlapByLayout = Math.max(0, layoutHeight - vvBottom);
+  const keyboardOverlap = focusedEditing ? Math.max(overlapByBaseline, overlapByLayout) : 0;
   const nextBottom = baseBottom + keyboardOverlap;
   els.undoActionBtn.style.bottom = `${nextBottom}px`;
 }
@@ -4079,7 +4147,7 @@ if (els.destinationGoogleSearchBtn) {
       return;
     }
     const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
-    window.open(searchUrl, "_blank", "noopener,noreferrer");
+    openExternalUrl(searchUrl);
   });
 }
 
@@ -4206,7 +4274,8 @@ document.addEventListener("click", (e) => {
 document.addEventListener("input", (e) => {
   const destinationInput = e.target.closest("input[data-day-role='destination-input']");
   if (!destinationInput) return;
-  updateDestinationByInputElement(destinationInput, { render: true, saveHistory: false });
+  const isComposing = Boolean(e.isComposing || (e.inputType && e.inputType.includes("Composition")));
+  updateDestinationByInputElement(destinationInput, { render: !isComposing, saveHistory: false, save: !isComposing });
 });
 
 document.addEventListener("input", (e) => {
@@ -4389,6 +4458,25 @@ if (els.exportChoiceLine) {
 document.addEventListener("click", (e) => {
   const routeListHost = e.target.closest("[data-day-role='route-list']");
   if (!routeListHost || routeListHost === els.routeList) return;
+
+  const removeBtn = e.target.closest("button[data-remove-point]");
+  if (removeBtn) {
+    const { dayIndex, pointIndex } = parseDayAndIndex(removeBtn.dataset.removePoint);
+    const day = state.transportDays[dayIndex];
+    if (!day) return;
+    normalizePlanPoints(day);
+    if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= day.points.length) return;
+    day.points.splice(pointIndex, 1);
+    normalizePlanPoints(day);
+    renderRouteListIntoDayCard(dayIndex);
+    if (dayIndex === state.activeDayIndex) {
+      renderRouteList();
+      renderTransportDetail();
+    }
+    saveTransportState();
+    setStatus("ルート地点を削除しました。");
+    return;
+  }
 
   const disabledSegmentBtn = e.target.closest("button[data-open-segment-disabled], button[data-open-segment-yahoo-disabled]");
   if (disabledSegmentBtn) {
@@ -4668,7 +4756,7 @@ els.routeList.addEventListener("click", (e) => {
       return;
     }
     const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
-    window.open(searchUrl, "_blank", "noopener,noreferrer");
+    openExternalUrl(searchUrl);
     return;
   }
 
@@ -4768,24 +4856,15 @@ els.routeList.addEventListener("input", (e) => {
     setActiveDay(dayIndex);
     if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= state.transportPlan.points.length) return;
     const current = ensurePointObject(state.transportPlan.points[pointIndex]);
-    const beforeHasValue = Boolean((current.name || "").trim());
-    const afterHasValue = Boolean((nameInput.value || "").trim());
     state.transportPlan.points[pointIndex] = { ...current, name: nameInput.value };
     normalizeRoutePoints();
     // Mobile IME対策:
-    // 変換中は再描画しない。空⇔入力済みの境界だけ再描画して区間ボタン状態を更新する。
+    // 入力中はDOM再生成を避ける（再描画でキーボードが閉じるのを防止）
     if (e.isComposing || (e.inputType && e.inputType.includes("Composition"))) {
       renderTransportDetail();
       return;
     }
-    if (beforeHasValue !== afterHasValue) {
-      const key = nameInput.dataset.pointInput;
-      const selStart = nameInput.selectionStart;
-      const selEnd = nameInput.selectionEnd;
-      rerenderRouteListKeepingPointFocus(key, selStart, selEnd);
-    } else {
-      renderTransportDetail();
-    }
+    renderTransportDetail();
     saveTransportState();
     return;
   }
@@ -4863,10 +4942,7 @@ els.routeList.addEventListener("compositionend", (e) => {
   const current = ensurePointObject(state.transportPlan.points[pointIndex]);
   state.transportPlan.points[pointIndex] = { ...current, name: nameInput.value };
   normalizeRoutePoints();
-  const key = nameInput.dataset.pointInput;
-  const selStart = nameInput.selectionStart;
-  const selEnd = nameInput.selectionEnd;
-  rerenderRouteListKeepingPointFocus(key, selStart, selEnd);
+  renderTransportDetail();
   saveTransportState();
 });
 
