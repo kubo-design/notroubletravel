@@ -1524,11 +1524,17 @@ function updateDestinationByInputElement(inputEl, options = {}) {
       }
     }
   }
-  if (render && dayIndex === state.activeDayIndex) {
-    renderRouteList();
-    renderTransportDetail();
+  if (dayIndex === state.activeDayIndex) {
+    if (render) {
+      renderRouteList();
+      renderTransportDetail();
+      return;
+    }
+    saveTransportState();
     return;
   }
+  syncDayCardInputsFromState(dayIndex);
+  renderRouteListIntoDayCard(dayIndex);
   saveTransportState();
 }
 
@@ -1769,6 +1775,39 @@ function setActiveDay(dayIndex) {
     }
   }
   saveTransportState();
+}
+
+function syncDayCardInputsFromState(dayIndex) {
+  const cards = ensureDayCardAccordionStructure();
+  const card = cards[dayIndex];
+  const day = state.transportDays[dayIndex];
+  if (!card || !day) return;
+
+  const originInput = card.querySelector("input[data-day-role='origin-input']");
+  if (originInput) {
+    originInput.value = day.origin || "";
+  }
+
+  const destinationInput = card.querySelector("input[data-day-role='destination-input']");
+  if (destinationInput) {
+    const destinationPoint = (day.points || [])
+      .map(ensurePointObject)
+      .find((point) => point.isDestination);
+    destinationInput.value = destinationPoint?.name || "";
+  }
+
+  const dayHeaderTime = card.querySelector("select[data-day-role='day-header-time-select']");
+  if (dayHeaderTime) {
+    dayHeaderTime.innerHTML = buildHeaderEstimateOptions(day.headerEstimate || "");
+  }
+}
+
+function syncAllDayCardsFromState() {
+  const cards = ensureDayCardAccordionStructure();
+  cards.forEach((_, idx) => {
+    syncDayCardInputsFromState(idx);
+    renderRouteListIntoDayCard(idx);
+  });
 }
 
 function renumberDaySectionTitles() {
@@ -2737,6 +2776,8 @@ function updateOriginByInputElement(inputEl) {
     renderTransportDetail();
     return;
   }
+  syncDayCardInputsFromState(dayIndex);
+  renderRouteListIntoDayCard(dayIndex);
   saveTransportState();
 }
 
@@ -4115,14 +4156,15 @@ function init() {
   renderOriginHistory();
   setOriginInlineEditMode(false);
   renderOriginInlineEditor();
+  renumberDaySectionTitles();
+  refreshAllDayHistoryDropdownCaches();
+  setupDayAccordionDefaults();
+  syncAllDayCardsFromState();
   setActiveDay(state.activeDayIndex);
   renderRouteList();
   renderTransportDetail();
   renderSpots();
   renderHistory();
-  renumberDaySectionTitles();
-  refreshAllDayHistoryDropdownCaches();
-  setupDayAccordionDefaults();
   syncPlaceInlineEditorButtons();
   setStatus("");
 }
