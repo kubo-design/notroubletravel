@@ -110,7 +110,7 @@ Object.defineProperty(state, "originHistory", {
 Object.defineProperty(state, "transportPlan", {
   get() {
     if (!state.transportDays.length) {
-      state.transportDays.push({ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, segmentTimes: {}, segmentCosts: {}, extraCosts: [], completed: false, orderKey: 0 });
+      state.transportDays.push({ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, segmentTimes: {}, segmentCosts: {}, extraCosts: [], costSplitPeople: "1", completed: false, orderKey: 0 });
       state.activeDayIndex = 0;
     }
     if (state.activeDayIndex < 0 || state.activeDayIndex >= state.transportDays.length) {
@@ -244,7 +244,7 @@ function loadJson(key, fallback) {
 }
 
 function loadTransportDays() {
-  const fallback = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, completed: false, extraCosts: [], orderKey: 0 }];
+  const fallback = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, completed: false, extraCosts: [], costSplitPeople: "1", orderKey: 0 }];
   const days = loadJson("ntt-transport-days", fallback);
   if (!Array.isArray(days) || !days.length) return fallback;
   const normalized = days.map((day, idx) => {
@@ -264,8 +264,9 @@ function loadTransportDays() {
         : {};
     const completed = typeof day?.completed === "boolean" ? day.completed : false;
     const extraCosts = Array.isArray(day?.extraCosts) ? day.extraCosts.map(normalizeExtraCostItem) : [];
+    const costSplitPeople = normalizePointCostPeopleValue(day?.costSplitPeople || "1");
     const orderKey = Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx;
-    const next = { origin, originNote, originNoteExpanded, points, expanded, headerEstimate, segmentTimes, segmentCosts, completed, extraCosts, orderKey };
+    const next = { origin, originNote, originNoteExpanded, points, expanded, headerEstimate, segmentTimes, segmentCosts, completed, extraCosts, costSplitPeople, orderKey };
     normalizePlanPoints(next);
     return next;
   });
@@ -295,8 +296,9 @@ function captureTransportUndoSnapshot() {
         : {};
     const completed = typeof day?.completed === "boolean" ? day.completed : false;
     const extraCosts = Array.isArray(day?.extraCosts) ? day.extraCosts.map(normalizeExtraCostItem) : [];
+    const costSplitPeople = normalizePointCostPeopleValue(day?.costSplitPeople || "1");
     const orderKey = Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx;
-    return { origin, originNote, originNoteExpanded, points, expanded, headerEstimate, segmentTimes, segmentCosts, completed, extraCosts, orderKey };
+    return { origin, originNote, originNoteExpanded, points, expanded, headerEstimate, segmentTimes, segmentCosts, completed, extraCosts, costSplitPeople, orderKey };
   });
   return {
     transportDays: days,
@@ -406,8 +408,9 @@ function saveTransportState() {
         : {};
     const completed = typeof day?.completed === "boolean" ? day.completed : false;
     const extraCosts = Array.isArray(day?.extraCosts) ? day.extraCosts.map(normalizeExtraCostItem) : [];
+    const costSplitPeople = normalizePointCostPeopleValue(day?.costSplitPeople || "1");
     const orderKey = Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx;
-    return { origin, originNote, originNoteExpanded, points, expanded, headerEstimate, segmentTimes, segmentCosts, completed, extraCosts, orderKey };
+    return { origin, originNote, originNoteExpanded, points, expanded, headerEstimate, segmentTimes, segmentCosts, completed, extraCosts, costSplitPeople, orderKey };
   });
   saveJson("ntt-transport-days", days);
   setStorageItemSafe("ntt-active-day-index", String(state.activeDayIndex));
@@ -446,6 +449,40 @@ function setSegmentManualTime(dayIndex, segmentIndex, value) {
   } else {
     day.segmentTimes[key] = normalized;
   }
+}
+
+function applyDayHeaderTimeSelectChange(dayHeaderTimeSelect) {
+  const card = dayHeaderTimeSelect?.closest(".card");
+  const dayIndex = card ? Number(card.dataset.dayCardIndex) : NaN;
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return false;
+  clearUndoTypingSession();
+  const nextValue = String(dayHeaderTimeSelect.value || "");
+  const prevValue = String(state.transportDays[dayIndex].headerEstimate || "");
+  if (prevValue !== nextValue) {
+    pushUndoCheckpoint(captureTransportUndoSnapshot());
+  }
+  state.transportDays[dayIndex].headerEstimate = nextValue;
+  dayHeaderTimeSelect.classList.toggle("is-selected-time", Boolean(dayHeaderTimeSelect.value));
+  saveTransportState();
+  return prevValue !== nextValue;
+}
+
+function applySegmentTimeSelectChange(segmentTimeSelect, { showStatus = false } = {}) {
+  const { dayIndex, pointIndex } = parseDayAndIndex(segmentTimeSelect?.dataset?.segmentTimeSelect);
+  if (!Number.isInteger(dayIndex) || !Number.isInteger(pointIndex)) return false;
+  clearUndoTypingSession();
+  const prevValue = getSegmentManualTime(dayIndex, pointIndex);
+  const nextValue = String(segmentTimeSelect.value || "");
+  if (prevValue !== nextValue) {
+    pushUndoCheckpoint(captureTransportUndoSnapshot());
+  }
+  setSegmentManualTime(dayIndex, pointIndex, segmentTimeSelect.value);
+  segmentTimeSelect.classList.toggle("is-selected-time", Boolean(segmentTimeSelect.value));
+  saveTransportState();
+  if (showStatus) {
+    setStatus(segmentTimeSelect.value ? "区間の手動時間を保存しました。" : "区間の手動時間をクリアしました。");
+  }
+  return prevValue !== nextValue;
 }
 
 function getSegmentCost(dayIndex, segmentIndex) {
@@ -2410,7 +2447,7 @@ function renderDestinationCostControls(dayIndex) {
   `;
   const toggleBtn = card.querySelector("button[data-day-role='destination-cost-toggle']");
   if (toggleBtn) {
-    toggleBtn.textContent = destinationPoint.costExpanded ? "金額閉" : "金額";
+    toggleBtn.textContent = destinationPoint.costExpanded ? "×" : "金額";
     toggleBtn.classList.toggle("note-toggle-active", destinationPoint.costExpanded);
   }
 }
@@ -2436,7 +2473,7 @@ function syncDayCardInputsFromState(dayIndex) {
     originNoteWrap.classList.toggle("hidden", !day.originNoteExpanded);
   }
   if (originNoteToggleBtn) {
-    originNoteToggleBtn.textContent = day.originNoteExpanded ? "備考閉" : "備考";
+    originNoteToggleBtn.textContent = day.originNoteExpanded ? "×" : "備考";
     originNoteToggleBtn.classList.toggle("note-toggle-active", day.originNoteExpanded);
   }
 
@@ -2459,12 +2496,12 @@ function syncDayCardInputsFromState(dayIndex) {
     }
     if (destinationNoteToggleBtn) {
       const isOpen = Boolean(destinationPoint?.noteExpanded);
-      destinationNoteToggleBtn.textContent = isOpen ? "備考閉" : "備考";
+      destinationNoteToggleBtn.textContent = isOpen ? "×" : "備考";
       destinationNoteToggleBtn.classList.toggle("note-toggle-active", isOpen);
     }
     if (destinationCostToggleBtn) {
       const isOpen = Boolean(destinationPoint?.costExpanded);
-      destinationCostToggleBtn.textContent = isOpen ? "金額閉" : "金額";
+      destinationCostToggleBtn.textContent = isOpen ? "×" : "金額";
       destinationCostToggleBtn.classList.toggle("note-toggle-active", isOpen);
     }
   }
@@ -2899,7 +2936,7 @@ function ensureDayCardsMatchStateDays() {
   const daySections = document.getElementById("day-sections");
   if (!daySections) return;
   if (!Array.isArray(state.transportDays) || !state.transportDays.length) {
-    state.transportDays = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, headerEstimate: "", segmentTimes: {}, segmentCosts: {}, extraCosts: [], completed: false, orderKey: 0 }];
+    state.transportDays = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, headerEstimate: "", segmentTimes: {}, segmentCosts: {}, extraCosts: [], costSplitPeople: "1", completed: false, orderKey: 0 }];
   }
 
   let cards = Array.from(daySections.querySelectorAll(":scope > .card"));
@@ -3013,6 +3050,7 @@ function clearDaySectionByButton(button) {
   day.segmentTimes = {};
   day.segmentCosts = {};
   day.extraCosts = [];
+  day.costSplitPeople = "1";
   day.completed = false;
 
   normalizePlanPoints(day);
@@ -3101,6 +3139,7 @@ function addRouteDay(afterDayIndex = null) {
     segmentTimes: {},
     segmentCosts: {},
     extraCosts: [],
+    costSplitPeople: "1",
     completed: false,
     orderKey: getNextDayOrderKey(),
   };
@@ -3153,6 +3192,7 @@ function normalizeAllDays() {
       day.extraCosts = [];
     }
     day.extraCosts = day.extraCosts.map(normalizeExtraCostItem);
+    day.costSplitPeople = normalizePointCostPeopleValue(day.costSplitPeople || "1");
   });
 }
 
@@ -3224,6 +3264,10 @@ function buildCostTypeOptions(selected = "その他") {
 function buildCostPeopleOptions(selected = "1") {
   const current = normalizePointCostPeopleValue(selected);
   return COST_PEOPLE_OPTIONS.map((n) => `<option value="${n}" ${n === current ? "selected" : ""}>${n}</option>`).join("");
+}
+
+function getDaySplitPeople(day) {
+  return normalizePointCostPeopleValue(day?.costSplitPeople || "1");
 }
 
 function getPointCostAmount(point) {
@@ -3299,7 +3343,7 @@ function renderDayCostSummary(dayIndex) {
   const segmentTotal = calcDaySegmentCost(day);
   const extraTotal = calcDayExtraCost(day);
   const dayTotal = locationTotal + segmentTotal + extraTotal;
-  const splitPeople = Math.max(1, Number(state.costSplitPeople) || 1);
+  const splitPeople = Math.max(1, Number(getDaySplitPeople(day)) || 1);
   const dayPerPerson = Math.round(dayTotal / splitPeople);
   const extras = Array.isArray(day.extraCosts) ? day.extraCosts.map(normalizeExtraCostItem) : [];
   host.innerHTML = `
@@ -3309,7 +3353,12 @@ function renderDayCostSummary(dayIndex) {
       <div class="day-cost-label">交通費合計: <strong>¥${segmentTotal.toLocaleString()}</strong></div>
       <div class="day-cost-label">追加合計: <strong>¥${extraTotal.toLocaleString()}</strong></div>
       <div class="day-cost-label day-cost-total">DAY合計: <strong>¥${dayTotal.toLocaleString()}</strong></div>
-      <div class="day-cost-label">人数割り(${splitPeople}): <strong>¥${dayPerPerson.toLocaleString()}</strong></div>
+      <label class="day-cost-label">人数割り(÷
+        <select class="tiny point-cost-people-select" data-day-split-people="${dayIndex}">
+          ${buildCostPeopleOptions(String(splitPeople))}
+        </select>
+        人): <strong>¥${dayPerPerson.toLocaleString()}</strong>
+      </label>
     </div>
     <div class="day-extra-cost-list">
       ${
@@ -3407,8 +3456,8 @@ function buildRouteListHtmlForDay(dayIndex) {
             <button type="button" class="ghost tiny ${state.activeHistoryDropdownIndex === key ? "history-toggle-active" : ""}" data-open-history="${key}">${state.activeHistoryDropdownIndex === key ? "閉じる" : "履歴"}</button>
             <button type="button" class="tiny origin-edit-btn ${isInlinePlaceEditorOpen(`waypoint:${key}`) ? "origin-edit-active" : ""}" data-edit-history="${key}">${isInlinePlaceEditorOpen(`waypoint:${key}`) ? "✕" : "☰"}</button>
             <button type="button" class="tiny route-btn-black" data-url-suggest="${dayIndex}:${sourceIndex}">MAP</button>
-            <button type="button" class="ghost tiny ${point.costExpanded ? "note-toggle-active" : ""}" data-toggle-point-cost="${dayIndex}:${sourceIndex}">${point.costExpanded ? "金額閉" : "金額"}</button>
-            <button type="button" class="ghost tiny ${point.noteExpanded ? "note-toggle-active" : ""}" data-toggle-point-note="${dayIndex}:${sourceIndex}">${point.noteExpanded ? "備考閉" : "備考"}</button>
+            <button type="button" class="ghost tiny ${point.costExpanded ? "note-toggle-active" : ""}" data-toggle-point-cost="${dayIndex}:${sourceIndex}">${point.costExpanded ? "×" : "金額"}</button>
+            <button type="button" class="ghost tiny ${point.noteExpanded ? "note-toggle-active" : ""}" data-toggle-point-note="${dayIndex}:${sourceIndex}">${point.noteExpanded ? "×" : "備考"}</button>
           </div>
           <div class="route-waypoint-note ${point.noteExpanded ? "" : "hidden"}">
             <div class="note-tools">
@@ -4130,6 +4179,7 @@ function undoLastTransportAction() {
           ? day.segmentCosts
           : {},
       extraCosts: Array.isArray(day?.extraCosts) ? day.extraCosts.map(normalizeExtraCostItem) : [],
+      costSplitPeople: normalizePointCostPeopleValue(day?.costSplitPeople || "1"),
       completed: typeof day?.completed === "boolean" ? day.completed : false,
       orderKey: Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx,
     };
@@ -4137,7 +4187,7 @@ function undoLastTransportAction() {
     return normalized;
   });
   if (!state.transportDays.length) {
-    state.transportDays = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, segmentTimes: {}, segmentCosts: {}, extraCosts: [], completed: false, orderKey: 0 }];
+    state.transportDays = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, segmentTimes: {}, segmentCosts: {}, extraCosts: [], costSplitPeople: "1", completed: false, orderKey: 0 }];
   }
   const nextActive = Number(snapshot.activeDayIndex);
   state.activeDayIndex =
@@ -4482,19 +4532,7 @@ document.addEventListener("change", async (e) => {
 
   const dayHeaderTimeSelect = e.target.closest("select[data-day-role='day-header-time-select']");
   if (dayHeaderTimeSelect) {
-    const card = dayHeaderTimeSelect.closest(".card");
-    const dayIndex = card ? Number(card.dataset.dayCardIndex) : NaN;
-    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
-      clearUndoTypingSession();
-      const nextValue = String(dayHeaderTimeSelect.value || "");
-      const prevValue = String(state.transportDays[dayIndex].headerEstimate || "");
-      if (prevValue !== nextValue) {
-        pushUndoCheckpoint(captureTransportUndoSnapshot());
-      }
-      state.transportDays[dayIndex].headerEstimate = nextValue;
-      dayHeaderTimeSelect.classList.toggle("is-selected-time", Boolean(dayHeaderTimeSelect.value));
-      saveTransportState();
-    }
+    applyDayHeaderTimeSelectChange(dayHeaderTimeSelect);
     return;
   }
 
@@ -4510,6 +4548,12 @@ document.addEventListener("change", async (e) => {
     }
     return;
   }
+});
+
+document.addEventListener("input", (e) => {
+  const dayHeaderTimeSelect = e.target.closest("select[data-day-role='day-header-time-select']");
+  if (!dayHeaderTimeSelect) return;
+  applyDayHeaderTimeSelectChange(dayHeaderTimeSelect);
 });
 
 document.addEventListener("click", (e) => {
@@ -5095,7 +5139,7 @@ document.addEventListener("change", (e) => {
 
 document.addEventListener("focusin", (e) => {
   const dayScopedField = e.target.closest(
-    "input[data-day-role='origin-input'], input[data-day-role='destination-input'], input[data-point-input], input[data-point-url], select[data-day-role='day-header-time-select'], input[data-point-cost-amount], select[data-point-cost-people], select[data-point-cost-type], input[data-extra-cost-amount], select[data-extra-cost-type], input[data-segment-cost-input]",
+    "input[data-day-role='origin-input'], input[data-day-role='destination-input'], input[data-point-input], input[data-point-url], select[data-day-role='day-header-time-select'], input[data-point-cost-amount], select[data-point-cost-people], select[data-point-cost-type], input[data-extra-cost-amount], select[data-extra-cost-type], input[data-segment-cost-input], select[data-day-split-people]",
   );
   if (!dayScopedField) return;
   const card = dayScopedField.closest(".card");
@@ -5625,6 +5669,12 @@ if (els.transportDetail) {
 }
 
 routeEventsHost.addEventListener("input", (e) => {
+  const segmentTimeSelect = e.target.closest("select[data-segment-time-select]");
+  if (segmentTimeSelect) {
+    applySegmentTimeSelectChange(segmentTimeSelect, { showStatus: false });
+    return;
+  }
+
   const nameInput = e.target.closest("input[data-point-input]");
   if (nameInput) {
     const { dayIndex, pointIndex } = parseDayAndIndex(nameInput.dataset.pointInput);
@@ -5747,17 +5797,7 @@ routeEventsHost.addEventListener("change", (e) => {
 
   const segmentTimeSelect = e.target.closest("select[data-segment-time-select]");
   if (segmentTimeSelect) {
-    const { dayIndex, pointIndex } = parseDayAndIndex(segmentTimeSelect.dataset.segmentTimeSelect);
-    clearUndoTypingSession();
-    const prevValue = getSegmentManualTime(dayIndex, pointIndex);
-    const nextValue = String(segmentTimeSelect.value || "");
-    if (prevValue !== nextValue) {
-      pushUndoCheckpoint(captureTransportUndoSnapshot());
-    }
-    setSegmentManualTime(dayIndex, pointIndex, segmentTimeSelect.value);
-    segmentTimeSelect.classList.toggle("is-selected-time", Boolean(segmentTimeSelect.value));
-    saveTransportState();
-    setStatus(segmentTimeSelect.value ? "区間の手動時間を保存しました。" : "区間の手動時間をクリアしました。");
+    applySegmentTimeSelectChange(segmentTimeSelect, { showStatus: true });
     return;
   }
 
@@ -5807,6 +5847,20 @@ routeEventsHost.addEventListener("change", (e) => {
     };
     renderDayCostSummary(dayIndex);
     renderTripCostSummary();
+    saveTransportState();
+    return;
+  }
+
+  const daySplitPeopleSelect = e.target.closest("select[data-day-split-people]");
+  if (daySplitPeopleSelect) {
+    const dayIndex = Number(daySplitPeopleSelect.dataset.daySplitPeople);
+    const day = state.transportDays[dayIndex];
+    if (!day) return;
+    setActiveDay(dayIndex);
+    const normalizedPeople = normalizePointCostPeopleValue(daySplitPeopleSelect.value || "1");
+    daySplitPeopleSelect.value = normalizedPeople;
+    day.costSplitPeople = normalizedPeople;
+    renderDayCostSummary(dayIndex);
     saveTransportState();
     return;
   }
@@ -6100,7 +6154,7 @@ if (els.clearAll) {
   els.clearAll.addEventListener("click", () => {
   state.hotels = [];
   state.selectedHotel = null;
-  state.transportDays = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, segmentTimes: {}, segmentCosts: {}, extraCosts: [], completed: false, orderKey: 0 }];
+  state.transportDays = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, segmentTimes: {}, segmentCosts: {}, extraCosts: [], costSplitPeople: "1", completed: false, orderKey: 0 }];
   state.activeDayIndex = 0;
   state.draggedPointIndex = null;
   state.draggedDayIndex = null;

@@ -1061,6 +1061,8 @@ button[data-section-toggle].is-open,
   margin-top: 16px;
   display: grid;
   gap: 16px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .route-waypoint-history-tools {
@@ -1192,8 +1194,18 @@ button[data-section-toggle].is-open,
 }
 
 .route-point-cost-row {
+  display: grid !important;
+  gap: 8px;
   justify-content: flex-start;
   margin-top: 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.route-point-cost-row > button[data-add-point-cost] {
+  justify-self: start;
 }
 
 .route-point-cost-row select {
@@ -1210,9 +1222,11 @@ button[data-section-toggle].is-open,
   align-items: center;
   flex-wrap: nowrap;
   width: 100%;
+  max-width: 100%;
   min-width: 0;
   overflow-x: auto;
   padding-bottom: 2px;
+  box-sizing: border-box;
 }
 
 .point-cost-item-row > * {
@@ -1233,30 +1247,62 @@ button[data-section-toggle].is-open,
 
 .destination-cost-row {
   margin-top: 10px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .day-cost-summary {
   margin-top: 14px;
-  border-top: 1px dashed var(--line);
-  padding-top: 10px;
+  border: 1px solid #d5e4f3;
+  background: linear-gradient(180deg, #f8fbff 0%, #f2f8ff 100%);
+  border-radius: 12px;
+  padding: 12px;
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .day-cost-header-row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  align-items: center;
+  align-items: stretch;
+}
+
+.day-cost-header-row > button[data-add-day-extra-cost] {
+  grid-column: 1 / -1;
+  justify-self: start;
 }
 
 .day-cost-label {
-  font-size: 0.92rem;
+  font-size: 0.9rem;
   color: #2e3d4d;
+  background: #fff;
+  border: 1px solid #d5e4f3;
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-height: 42px;
+}
+
+.day-cost-label strong {
+  margin-left: auto;
+  font-size: 1rem;
+  color: #112033;
 }
 
 .day-cost-total {
-  margin-left: auto;
+  grid-column: 1 / -1;
+  border-color: #b7cde4;
+  background: #eef5ff;
+}
+
+.day-cost-label select[data-day-split-people] {
+  min-width: 76px;
 }
 
 .day-extra-cost-list {
@@ -1295,6 +1341,41 @@ button[data-section-toggle].is-open,
 
 .trip-split-input {
   width: 80px;
+}
+
+@media (max-width: 768px) {
+  .day-cost-summary {
+    padding: 10px;
+    border-radius: 10px;
+    gap: 8px;
+  }
+
+  .day-cost-header-row {
+    grid-template-columns: 1fr;
+  }
+
+  .day-cost-header-row > button[data-add-day-extra-cost] {
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  .day-cost-label {
+    font-size: 0.86rem;
+    padding: 8px 9px;
+    min-height: 40px;
+  }
+
+  .day-cost-label strong {
+    font-size: 0.96rem;
+  }
+}
+
+/* iOSで数値入力時に自動ズームしないよう、対象入力の文字サイズを16px以上に固定 */
+input[data-point-cost-amount],
+input[data-extra-cost-amount],
+input[data-segment-cost-input],
+input[data-trip-split-people] {
+  font-size: 16px !important;
 }
 
 .route-item.dragging {
