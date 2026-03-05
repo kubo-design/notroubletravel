@@ -3,7 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="NoTroubleTravel" />
     <title>NoTroubleTravel | 旅行しおりメーカー</title>
+    <link rel="apple-touch-icon" href="ntt_logo.jpg" />
+    <link rel="icon" href="ntt_logo.jpg" type="image/jpeg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -17,8 +21,14 @@
     <header class="hero wrap">
       <p class="brand">NoTroubleTravel</p>
       <div class="day-io-all">
-        <button type="button" id="export-all-days" class="ghost tiny" aria-label="全日ルート書き出し" title="全日ルート書き出し">ALL↑</button>
-        <button type="button" id="import-all-days" class="ghost tiny" aria-label="全日ルート読み込み" title="全日ルート読み込み">ALL↓</button>
+        <button type="button" id="export-all-days" class="ghost tiny header-io-btn" aria-label="全日ルート書き出し" title="全日ルート書き出し">
+          <span class="header-io-icon" aria-hidden="true">→|</span>
+          <span class="header-io-label">ダウン</span>
+        </button>
+        <button type="button" id="import-all-days" class="ghost tiny header-io-btn" aria-label="全日ルート読み込み" title="全日ルート読み込み">
+          <span class="header-io-icon" aria-hidden="true">|←</span>
+          <span class="header-io-label">アップ</span>
+        </button>
         <input type="file" id="import-all-days-file" class="hidden" accept="application/json,.json" />
       </div>
     </header>
@@ -33,7 +43,10 @@
           </div>
           <div class="day-route-actions">
             <button type="button" class="ghost tiny" data-open-day-full-route>GoogleMap</button>
-            <button type="button" class="ghost tiny" data-open-day-full-route-yahoo>Yahooカーナビ</button>
+            <button type="button" class="ghost tiny" data-open-day-full-route-yahoo>Yahooナビ</button>
+            <select class="tiny" data-day-role="day-header-time-select" aria-label="予測時間">
+              <option value="">予測時間</option>
+            </select>
           </div>
           <div class="input-tools day-actions">
             <button type="button" id="add-route-point" class="day-card-add icon-btn" aria-label="DAY追加" title="DAY追加">＋</button>
@@ -41,7 +54,6 @@
           </div>
         </div>
         <div class="section-head">
-          <h3>ルート</h3>
         </div>
         <div class="section-block">
           <div class="section-head">
@@ -50,17 +62,32 @@
                 <button type="button" class="ghost tiny icon-btn" data-section-toggle aria-label="出発地開閉" title="出発地開閉">▶</button>
                 <h3>START</h3>
               </div>
-              <input type="text" id="origin" list="origin-history" placeholder="デフォルトで設定した出発地名" required />
+              <input type="text" id="origin" list="origin-history" placeholder="出発地" required />
             </div>
           </div>
           <div class="section-body hidden">
             <form id="transport-form"></form>
             <div class="origin-action-row">
-              <button type="button" id="origin-history-btn" data-day-role="origin-history-btn">履歴から</button>
+              <button type="button" id="origin-history-btn" data-day-role="origin-history-btn">履歴</button>
               <button type="button" id="origin-history-edit-btn" data-day-role="origin-history-edit-btn" class="origin-edit-btn" aria-label="履歴編集">☰</button>
-              <button type="button" id="use-current-location" class="origin-current-btn">現在地から</button>
+              <button type="button" id="origin-url-suggest-btn" class="ghost">MAP</button>
+              <button type="button" id="use-current-location" class="origin-current-btn">現在地</button>
+              <button type="button" data-day-role="origin-note-toggle" class="ghost tiny">備考</button>
+            </div>
+            <div data-day-role="origin-note-wrap" class="hidden">
+              <div class="note-tools">
+                <button type="button" class="ghost tiny" data-note-format="checkbox">チェックボックス</button>
+                <button type="button" class="ghost tiny" data-note-format="list">リスト</button>
+                <button type="button" class="ghost tiny" data-note-clear>クリア</button>
+              </div>
+              <textarea data-day-role="origin-note-input" rows="2" placeholder="START備考"></textarea>
+            </div>
+            <div id="origin-map-url-wrap" class="goal-action-row hidden">
+              <input type="url" id="origin-map-url-input" placeholder="GoogleMap URLを貼り付け" />
+              <button type="button" id="origin-map-url-apply" class="goal-register-btn">候補表示</button>
             </div>
             <div id="origin-history-dropdown" data-day-role="origin-history-dropdown" class="route-history-dropdown hidden"></div>
+            <div id="origin-url-candidates" class="route-candidates hidden"></div>
             <div id="origin-inline-editor" class="origin-inline-editor hidden">
               <div id="origin-inline-list" class="origin-inline-list">
                 <div class="origin-inline-item origin-inline-default-row" data-origin-index="0" draggable="true">
@@ -75,6 +102,7 @@
               <div class="origin-inline-divider"></div>
               <div class="origin-inline-actions">
                 <button type="button" id="origin-inline-select-all" class="ghost">すべてをチェック</button>
+                <button type="button" id="origin-inline-clear-all" class="ghost">クリア</button>
                 <button type="button" id="origin-inline-delete-selected">チェックしたものを削除</button>
               </div>
             </div>
@@ -91,17 +119,36 @@
                 <button type="button" class="ghost tiny icon-btn" data-section-toggle aria-label="目的地開閉" title="目的地開閉">▶</button>
                 <h3>GOAL</h3>
               </div>
-              <input type="text" id="destination-input" data-day-role="destination-input" placeholder="GOALに設定された場所名" />
+              <input type="text" id="destination-input" data-day-role="destination-input" placeholder="目的地" />
             </div>
           </div>
           <div class="section-body hidden">
-            <form id="hotel-register-form" class="goal-action-row">
-              <button type="button" id="destination-history-btn" data-day-role="destination-history-btn">履歴から</button>
+            <div class="goal-action-row">
+              <button type="button" id="destination-history-btn" data-day-role="destination-history-btn">履歴</button>
               <button type="button" id="destination-history-edit-btn" data-day-role="destination-history-edit-btn" class="origin-edit-btn" aria-label="履歴編集">☰</button>
-              <input type="url" id="hotelUrl" data-day-role="hotel-url-input" placeholder="宿泊地 URL" required />
-              <button type="submit" class="goal-register-btn">登録</button>
-            </form>
+              <button type="button" id="destination-url-suggest-btn" class="ghost">MAP</button>
+              <button type="button" data-day-role="destination-note-toggle" class="ghost tiny">備考</button>
+            </div>
+            <div data-day-role="destination-note-wrap" class="hidden">
+              <div class="note-tools">
+                <button type="button" class="ghost tiny" data-note-format="checkbox">チェックボックス</button>
+                <button type="button" class="ghost tiny" data-note-format="list">リスト</button>
+                <button type="button" class="ghost tiny" data-note-clear>クリア</button>
+              </div>
+              <textarea data-day-role="destination-note-input" rows="2" placeholder="GOAL備考"></textarea>
+            </div>
+            <div id="destination-map-url-wrap" class="goal-action-row hidden">
+              <input type="url" id="destination-map-url-input" placeholder="GoogleMap URLを貼り付け" />
+              <button type="button" id="destination-map-url-apply" class="goal-register-btn">候補表示</button>
+            </div>
+            <div id="destination-inline-history-editor" class="origin-inline-editor hidden"></div>
             <div id="destination-history-dropdown" data-day-role="destination-history-dropdown" class="route-history-dropdown hidden"></div>
+            <div class="goal-search-row">
+              <button type="button" id="destination-name-suggest-btn" class="tiny route-btn-green">名称候補</button>
+              <button type="button" id="destination-google-search-btn" class="tiny route-btn-black">Google検索</button>
+            </div>
+            <div id="destination-name-candidates" class="route-candidates hidden"></div>
+            <div id="destination-url-candidates" class="route-candidates hidden"></div>
 
             <div class="hotel-select-head">
               <h4>宿泊地選択</h4>
@@ -110,6 +157,15 @@
                 <option value="price-desc">料金が高い順</option>
               </select>
             </div>
+            <form id="hotel-register-form" class="hotel-register-row" novalidate>
+              <input type="text" inputmode="url" id="hotelUrl" data-day-role="hotel-url-input" placeholder="宿泊地 URL" />
+              <button type="submit" class="goal-register-btn">登録</button>
+            </form>
+            <div class="goal-action-row">
+              <button type="button" id="hotel-url-history-btn" data-day-role="hotel-url-history-btn">履歴</button>
+              <button type="button" id="hotel-url-history-edit-btn" data-day-role="hotel-url-history-edit-btn" class="origin-edit-btn" aria-label="履歴編集">☰</button>
+            </div>
+            <div id="hotel-url-history-dropdown" data-day-role="hotel-url-history-dropdown" class="route-history-dropdown hidden"></div>
             <div id="hotel-results" data-day-role="hotel-results" class="hotel-choice-list"></div>
           </div>
         </div>
@@ -127,6 +183,7 @@
         </div>
         <div class="history-modal-actions">
           <button type="button" id="history-select-all" class="ghost tiny">全てにチェック</button>
+          <button type="button" id="history-clear-all" class="ghost tiny">クリア</button>
           <button type="button" id="history-delete-selected" class="ghost tiny">チェック項目を削除</button>
         </div>
         <div id="history-editor-list" class="history-editor-list"></div>
@@ -146,6 +203,8 @@
         </div>
       </div>
     </div>
+
+    <button type="button" id="undo-action-btn" class="undo-action-btn" aria-label="動作を戻す" title="動作を戻す">↩︎</button>
 
     <script src="app.js"></script>
   </body>

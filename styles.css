@@ -351,10 +351,20 @@ input[data-day-role="origin-input"]::placeholder {
 
 .goal-action-row {
   margin-top: 8px;
-  display: grid;
-  grid-template-columns: auto auto minmax(140px, 1fr) auto;
+  display: flex;
+  flex-wrap: nowrap;
   gap: 10px;
   align-items: center;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.goal-action-row > * {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .goal-search-row {
@@ -1151,10 +1161,19 @@ button[data-section-toggle].is-open,
 }
 
 .route-history-tools.route-waypoint-history-tools {
-  display: grid;
-  grid-template-columns: auto auto auto auto;
+  display: flex;
+  flex-wrap: nowrap;
   gap: 8px;
   align-items: center;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.route-history-tools.route-waypoint-history-tools > * {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .route-history-dropdown {
@@ -1170,6 +1189,112 @@ button[data-section-toggle].is-open,
   gap: 6px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.route-point-cost-row {
+  justify-content: flex-start;
+  margin-top: 8px;
+}
+
+.route-point-cost-row select {
+  min-width: 110px;
+}
+
+.route-point-cost-row input {
+  max-width: 180px;
+}
+
+.point-cost-item-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: nowrap;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.point-cost-item-row > * {
+  flex: 0 0 auto;
+}
+
+.point-cost-item-row input[data-point-cost-amount] {
+  min-width: 120px;
+}
+
+.point-cost-people-select {
+  min-width: 86px !important;
+}
+
+.route-segment-cost-input {
+  width: 108px;
+}
+
+.destination-cost-row {
+  margin-top: 10px;
+}
+
+.day-cost-summary {
+  margin-top: 14px;
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.day-cost-header-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.day-cost-label {
+  font-size: 0.92rem;
+  color: #2e3d4d;
+}
+
+.day-cost-total {
+  margin-left: auto;
+}
+
+.day-extra-cost-list {
+  display: grid;
+  gap: 6px;
+}
+
+.day-extra-cost-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.trip-total-cost {
+  margin-top: 16px;
+  padding: 12px;
+  border: 2px solid #1b2940;
+  background: #fff;
+  border-radius: 10px;
+  font-size: 1rem;
+}
+
+.trip-total-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.trip-split-wrap {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.trip-split-input {
+  width: 80px;
 }
 
 .route-item.dragging {

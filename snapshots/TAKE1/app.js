@@ -1,10 +1,71 @@
+const storageState = {
+  warned: false,
+};
+
+function notifyStorageRestricted() {
+  if (storageState.warned) return;
+  storageState.warned = true;
+  const msg =
+    "このブラウザ設定では端末保存(localStorage)が制限され、入力内容が保持されない可能性があります。通常タブで開くか、プライバシー保護設定を緩和してください。";
+  try {
+    if (typeof setStatus === "function") {
+      setStatus(msg, true);
+    }
+  } catch {
+    // noop
+  }
+  try {
+    window.alert(msg);
+  } catch {
+    // noop
+  }
+}
+
+function getStorageItemSafe(key, fallback = "") {
+  try {
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value;
+  } catch {
+    notifyStorageRestricted();
+    return fallback;
+  }
+}
+
+function setStorageItemSafe(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch {
+    notifyStorageRestricted();
+    return false;
+  }
+}
+
+function removeStorageItemSafe(key) {
+  try {
+    localStorage.removeItem(key);
+    return true;
+  } catch {
+    notifyStorageRestricted();
+    return false;
+  }
+}
+
+const legacyOriginHistory = loadJson("ntt-origin-history", []);
+const initialPlaceHistoryRaw = loadJson("ntt-place-history", []);
+const initialPlaceHistory = [...initialPlaceHistoryRaw, ...legacyOriginHistory]
+  .map((item) => String(item || "").trim())
+  .filter(Boolean)
+  .filter((item, idx, arr) => arr.indexOf(item) === idx)
+  .slice(0, 50);
+
 const state = {
   hotels: [],
   selectedHotel: null,
-  originHistory: loadJson("ntt-origin-history", []),
-  defaultOrigin: localStorage.getItem("ntt-default-origin") || "",
+  originHistory: [],
+  defaultOrigin: getStorageItemSafe("ntt-default-origin", ""),
   hotelUrlHistory: loadJson("ntt-hotel-url-history", []),
-  placeHistory: loadJson("ntt-place-history", []),
+  placeHistory: initialPlaceHistory,
   activeHistoryDropdownIndex: null,
   activeTopHistoryDropdown: null,
   historyEditorChecks: {},
@@ -12,6 +73,8 @@ const state = {
   originInlineChecks: {},
   originInlineDragIndex: null,
   originInlineEditMode: false,
+  originInlineAnchorKey: "",
+  historyEditorAnchorKey: "",
   hotelExpanded: {},
   pendingExport: null,
   transportDays: loadTransportDays(),
@@ -20,12 +83,33 @@ const state = {
   draggedDayIndex: null,
   spots: [],
   history: loadJson("ntt-history", []),
+  originUrlCandidates: [],
+  destinationUrlCandidates: [],
+  destinationNameCandidates: [],
+  undoStack: [],
+  lastUndoSnapshot: null,
+  lastUndoSignature: "",
+  lastUndoDaysSignature: "",
+  lastUndoPushAt: 0,
+  undoTypingSessionKey: "",
+  undoTypingClearTimer: null,
+  isApplyingUndo: false,
+  lastHotelRegister: { url: "", at: 0 },
 };
+
+Object.defineProperty(state, "originHistory", {
+  get() {
+    return state.placeHistory;
+  },
+  set(value) {
+    state.placeHistory = Array.isArray(value) ? value : [];
+  },
+});
 
 Object.defineProperty(state, "transportPlan", {
   get() {
     if (!state.transportDays.length) {
-      state.transportDays.push({ origin: "", points: [], expanded: true });
+      state.transportDays.push({ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, completed: false, orderKey: 0 });
       state.activeDayIndex = 0;
     }
     if (state.activeDayIndex < 0 || state.activeDayIndex >= state.transportDays.length) {
@@ -61,13 +145,27 @@ const els = {
   destinationHistoryBtn: document.getElementById("destination-history-btn"),
   destinationHistoryEditBtn: document.getElementById("destination-history-edit-btn"),
   destinationHistoryDropdown: document.getElementById("destination-history-dropdown"),
+  destinationUrlSuggestBtn: document.getElementById("destination-url-suggest-btn"),
+  destinationNameSuggestBtn: document.getElementById("destination-name-suggest-btn"),
+  destinationGoogleSearchBtn: document.getElementById("destination-google-search-btn"),
+  destinationNameCandidates: document.getElementById("destination-name-candidates"),
+  destinationUrlCandidates: document.getElementById("destination-url-candidates"),
+  destinationMapUrlWrap: document.getElementById("destination-map-url-wrap"),
+  destinationMapUrlInput: document.getElementById("destination-map-url-input"),
+  destinationMapUrlApply: document.getElementById("destination-map-url-apply"),
   originHistoryBtn: document.getElementById("origin-history-btn"),
   originHistoryEditBtn: document.getElementById("origin-history-edit-btn"),
   originHistoryDropdown: document.getElementById("origin-history-dropdown"),
+  originUrlSuggestBtn: document.getElementById("origin-url-suggest-btn"),
+  originUrlCandidates: document.getElementById("origin-url-candidates"),
+  originMapUrlWrap: document.getElementById("origin-map-url-wrap"),
+  originMapUrlInput: document.getElementById("origin-map-url-input"),
+  originMapUrlApply: document.getElementById("origin-map-url-apply"),
   originHistory: document.getElementById("origin-history"),
   originInlineEditor: document.getElementById("origin-inline-editor"),
   originInlineHistoryList: document.getElementById("origin-inline-history-list"),
   originInlineSelectAll: document.getElementById("origin-inline-select-all"),
+  originInlineClearAll: document.getElementById("origin-inline-clear-all"),
   originInlineDeleteSelected: document.getElementById("origin-inline-delete-selected"),
   addRoutePoint: document.getElementById("add-route-point"),
   addWaypointBtn: document.getElementById("add-waypoint-btn"),
@@ -77,6 +175,7 @@ const els = {
   historyEditorList: document.getElementById("history-editor-list"),
   historyEditorClose: document.getElementById("history-editor-close"),
   historySelectAll: document.getElementById("history-select-all"),
+  historyClearAll: document.getElementById("history-clear-all"),
   historyDeleteSelected: document.getElementById("history-delete-selected"),
   spotForm: document.getElementById("spot-form"),
   spotList: document.getElementById("spot-list"),
@@ -93,6 +192,7 @@ const els = {
   exportChoiceAirdrop: document.getElementById("export-choice-airdrop"),
   exportChoiceLine: document.getElementById("export-choice-line"),
   status: document.getElementById("status"),
+  undoActionBtn: document.getElementById("undo-action-btn"),
 };
 
 const siteMap = {
@@ -106,26 +206,32 @@ const siteMap = {
 
 function loadJson(key, fallback) {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = getStorageItemSafe(key, null);
     return raw ? JSON.parse(raw) : fallback;
   } catch {
+    notifyStorageRestricted();
     return fallback;
   }
 }
 
 function loadTransportDays() {
-  const fallback = [{ origin: "", points: [], expanded: true }];
+  const fallback = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, completed: false, orderKey: 0 }];
   const days = loadJson("ntt-transport-days", fallback);
   if (!Array.isArray(days) || !days.length) return fallback;
   const normalized = days.map((day, idx) => {
     const origin = typeof day?.origin === "string" ? day.origin : "";
+    const originNote = typeof day?.originNote === "string" ? day.originNote : "";
+    const originNoteExpanded = Boolean(day?.originNoteExpanded);
     const points = Array.isArray(day?.points) ? day.points.map(ensurePointObject) : [];
     const expanded = typeof day?.expanded === "boolean" ? day.expanded : idx === 0;
+    const headerEstimate = typeof day?.headerEstimate === "string" ? day.headerEstimate : "";
     const segmentTimes =
       day?.segmentTimes && typeof day.segmentTimes === "object" && !Array.isArray(day.segmentTimes)
         ? day.segmentTimes
         : {};
-    const next = { origin, points, expanded, segmentTimes };
+    const completed = typeof day?.completed === "boolean" ? day.completed : false;
+    const orderKey = Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx;
+    const next = { origin, originNote, originNoteExpanded, points, expanded, headerEstimate, segmentTimes, completed, orderKey };
     normalizePlanPoints(next);
     return next;
   });
@@ -133,23 +239,143 @@ function loadTransportDays() {
 }
 
 function loadActiveDayIndex() {
-  const raw = Number(localStorage.getItem("ntt-active-day-index"));
+  const raw = Number(getStorageItemSafe("ntt-active-day-index", ""));
   return Number.isInteger(raw) && raw >= 0 ? raw : 0;
 }
 
-function saveTransportState() {
+function captureTransportUndoSnapshot() {
   const days = (state.transportDays || []).map((day, idx) => {
     const origin = typeof day?.origin === "string" ? day.origin : "";
+    const originNote = typeof day?.originNote === "string" ? day.originNote : "";
+    const originNoteExpanded = Boolean(day?.originNoteExpanded);
     const points = Array.isArray(day?.points) ? day.points.map(ensurePointObject) : [];
     const expanded = typeof day?.expanded === "boolean" ? day.expanded : idx === state.activeDayIndex;
+    const headerEstimate = typeof day?.headerEstimate === "string" ? day.headerEstimate : "";
     const segmentTimes =
       day?.segmentTimes && typeof day.segmentTimes === "object" && !Array.isArray(day.segmentTimes)
         ? day.segmentTimes
         : {};
-    return { origin, points, expanded, segmentTimes };
+    const completed = typeof day?.completed === "boolean" ? day.completed : false;
+    const orderKey = Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx;
+    return { origin, originNote, originNoteExpanded, points, expanded, headerEstimate, segmentTimes, completed, orderKey };
+  });
+  return {
+    transportDays: days,
+    activeDayIndex: Number.isInteger(state.activeDayIndex) ? state.activeDayIndex : 0,
+  };
+}
+
+function pushUndoCheckpoint(snapshot) {
+  if (!snapshot) return;
+  const sig = JSON.stringify(snapshot);
+  const top = state.undoStack.length ? state.undoStack[state.undoStack.length - 1] : null;
+  if (top && JSON.stringify(top) === sig) return;
+  state.undoStack.push(snapshot);
+  if (state.undoStack.length > 5) {
+    state.undoStack.shift();
+  }
+}
+
+function registerUndoSnapshot() {
+  if (state.isApplyingUndo) return;
+  const snapshot = captureTransportUndoSnapshot();
+  const signature = JSON.stringify(snapshot);
+  const daysSignature = JSON.stringify(snapshot.transportDays);
+  if (state.undoTypingSessionKey) {
+    state.lastUndoSnapshot = snapshot;
+    state.lastUndoSignature = signature;
+    state.lastUndoDaysSignature = daysSignature;
+    return;
+  }
+  const now = Date.now();
+  if (!state.lastUndoSnapshot || !state.lastUndoSignature) {
+    state.lastUndoSnapshot = snapshot;
+    state.lastUndoSignature = signature;
+    state.lastUndoDaysSignature = daysSignature;
+    state.lastUndoPushAt = now;
+    return;
+  }
+  if (daysSignature === state.lastUndoDaysSignature) {
+    state.lastUndoSnapshot = snapshot;
+    state.lastUndoSignature = signature;
+    state.lastUndoDaysSignature = daysSignature;
+    return;
+  }
+  pushUndoCheckpoint(state.lastUndoSnapshot);
+  state.lastUndoSnapshot = snapshot;
+  state.lastUndoSignature = signature;
+  state.lastUndoDaysSignature = daysSignature;
+  state.lastUndoPushAt = now;
+}
+
+function getUndoFieldKey(field) {
+  if (!field) return "";
+  const card = field.closest(".card");
+  const dayIndex = Number(card?.dataset.dayCardIndex);
+  const dayPart = Number.isInteger(dayIndex) ? `day:${dayIndex}` : "day:-1";
+  const fieldPart =
+    field.dataset.pointNote ||
+    field.dataset.pointInput ||
+    field.dataset.pointUrl ||
+    field.dataset.dayRole ||
+    field.id ||
+    "";
+  return `${dayPart}:${fieldPart}`;
+}
+
+function clearUndoTypingSession() {
+  if (state.undoTypingClearTimer) {
+    clearTimeout(state.undoTypingClearTimer);
+    state.undoTypingClearTimer = null;
+  }
+  if (!state.undoTypingSessionKey) return;
+  state.undoTypingSessionKey = "";
+  state.lastUndoPushAt = Date.now();
+}
+
+function saveTransportState() {
+  registerUndoSnapshot();
+  if (!state.undoTypingSessionKey) {
+    const prevDaysRaw = getStorageItemSafe("ntt-transport-days", null);
+    const prevActiveDayRaw = getStorageItemSafe("ntt-active-day-index", null);
+    if (prevDaysRaw !== null) {
+      setStorageItemSafe("ntt-transport-days-prev", prevDaysRaw);
+    }
+    if (prevActiveDayRaw !== null) {
+      setStorageItemSafe("ntt-active-day-index-prev", prevActiveDayRaw);
+    }
+  }
+  const days = (state.transportDays || []).map((day, idx) => {
+    const origin = typeof day?.origin === "string" ? day.origin : "";
+    const originNote = typeof day?.originNote === "string" ? day.originNote : "";
+    const originNoteExpanded = Boolean(day?.originNoteExpanded);
+    const points = Array.isArray(day?.points) ? day.points.map(ensurePointObject) : [];
+    const expanded = typeof day?.expanded === "boolean" ? day.expanded : idx === state.activeDayIndex;
+    const headerEstimate = typeof day?.headerEstimate === "string" ? day.headerEstimate : "";
+    const segmentTimes =
+      day?.segmentTimes && typeof day.segmentTimes === "object" && !Array.isArray(day.segmentTimes)
+        ? day.segmentTimes
+        : {};
+    const completed = typeof day?.completed === "boolean" ? day.completed : false;
+    const orderKey = Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx;
+    return { origin, originNote, originNoteExpanded, points, expanded, headerEstimate, segmentTimes, completed, orderKey };
   });
   saveJson("ntt-transport-days", days);
-  localStorage.setItem("ntt-active-day-index", String(state.activeDayIndex));
+  setStorageItemSafe("ntt-active-day-index", String(state.activeDayIndex));
+}
+
+function getDayDisplayNumber(day, fallbackIndex = 0) {
+  const key = Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : fallbackIndex;
+  return key + 1;
+}
+
+function getNextDayOrderKey() {
+  if (!Array.isArray(state.transportDays) || !state.transportDays.length) return 0;
+  const max = state.transportDays.reduce((acc, day, idx) => {
+    const key = Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx;
+    return Math.max(acc, key);
+  }, -1);
+  return max + 1;
 }
 
 function getSegmentManualTime(dayIndex, segmentIndex) {
@@ -173,25 +399,83 @@ function setSegmentManualTime(dayIndex, segmentIndex, value) {
   }
 }
 
+function clearSegmentTimesForDay(dayIndex) {
+  const day = state.transportDays[dayIndex];
+  if (!day) return;
+  day.segmentTimes = {};
+}
+
+function clearSegmentTimesAroundMove(dayIndex, fromIndex, toIndex) {
+  const day = state.transportDays[dayIndex];
+  if (!day || !day.segmentTimes || typeof day.segmentTimes !== "object") return;
+  const minPoint = Math.min(fromIndex, toIndex);
+  const maxPoint = Math.max(fromIndex, toIndex);
+  // 入れ替えで影響するのは概ね前後区間なので、その近傍だけクリアする
+  const fromSeg = Math.max(0, minPoint - 1);
+  const toSeg = Math.max(0, maxPoint + 1);
+  Object.keys(day.segmentTimes).forEach((key) => {
+    const idx = Number(key);
+    if (!Number.isInteger(idx)) return;
+    if (idx >= fromSeg && idx <= toSeg) {
+      delete day.segmentTimes[key];
+    }
+  });
+}
+
+function formatMinutesShort(totalMinutes) {
+  const minutes = Math.max(0, Number(totalMinutes) || 0);
+  const hour = Math.floor(minutes / 60);
+  const min = minutes % 60;
+  if (hour <= 0) return `${min}m`;
+  return `${hour}h${String(min).padStart(2, "0")}m`;
+}
+
 function buildSegmentTimeOptions(selectedValue = "") {
   const selected = String(selectedValue || "");
-  let html = `<option value="" ${selected === "" ? "selected" : ""}>時間選択</option>`;
+  let html = `<option value="" ${selected === "" ? "selected" : ""}>予測時間</option>`;
   for (let minute = 5; minute <= 720; minute += 5) {
-    const hour = Math.floor(minute / 60);
-    const min = minute % 60;
-    const label = hour > 0 ? `${hour}時間${String(min).padStart(2, "0")}分` : `${min}分`;
+    const label = formatMinutesShort(minute);
+    html += `<option value="${minute}" ${selected === String(minute) ? "selected" : ""}>${label}</option>`;
+  }
+  return html;
+}
+
+function buildHeaderEstimateOptions(selectedValue = "") {
+  const selected = String(selectedValue || "");
+  let html = `<option value="" ${selected === "" ? "selected" : ""}>予測時間</option>`;
+  for (let minute = 5; minute <= 720; minute += 5) {
+    const label = formatMinutesShort(minute);
     html += `<option value="${minute}" ${selected === String(minute) ? "selected" : ""}>${label}</option>`;
   }
   return html;
 }
 
 function saveJson(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+  setStorageItemSafe(key, JSON.stringify(value));
 }
 
 function setStatus(msg, isWarning = false) {
-  els.status.textContent = msg;
-  els.status.className = isWarning ? "status wrap warning" : "status wrap";
+  const text = String(msg || "");
+  const statusEl = typeof els !== "undefined" ? els.status : null;
+  if (statusEl) {
+    statusEl.textContent = text;
+    statusEl.className = isWarning ? "status wrap warning" : "status wrap";
+  }
+  if (text) {
+    if (isWarning) {
+      console.warn(text);
+    } else {
+      console.info(text);
+    }
+  }
+  const hiddenByStyle =
+    !statusEl ||
+    statusEl.classList.contains("hidden") ||
+    window.getComputedStyle(statusEl).display === "none" ||
+    window.getComputedStyle(statusEl).visibility === "hidden";
+  if (isWarning && text && hiddenByStyle) {
+    window.alert(text);
+  }
 }
 
 function escapeHtml(value) {
@@ -298,14 +582,41 @@ function isMobileDevice() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
 }
 
+function openInNewTab(url) {
+  if (!url) return false;
+  try {
+    const popup = window.open("about:blank", "_blank");
+    if (popup) {
+      try {
+        popup.opener = null;
+      } catch {
+        // noop
+      }
+      popup.location.replace(url);
+      return true;
+    }
+  } catch {
+    // fallback below
+  }
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.target = "_blank";
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    return true;
+  } catch {
+    // fallback below
+  }
+  window.location.assign(url);
+  return false;
+}
+
 function openGoogleMap(url) {
   if (!url) return;
-  if (isMobileDevice()) {
-    // On smartphones, this URL often hands off to the Google Maps app.
-    window.location.href = url;
-    return;
-  }
-  window.open(url, "_blank", "noopener,noreferrer");
+  openInNewTab(url);
 }
 
 function openYahooCarNaviRoute(from, to) {
@@ -313,11 +624,17 @@ function openYahooCarNaviRoute(from, to) {
   const toName = (to || "").trim();
   if (!fromName || !toName) return;
   const routeUrl = `https://map.yahoo.co.jp/route/car?from=${encodeURIComponent(fromName)}&to=${encodeURIComponent(toName)}`;
-  if (isMobileDevice()) {
-    window.location.href = routeUrl;
-    return;
-  }
-  window.open(routeUrl, "_blank", "noopener,noreferrer");
+  openInNewTab(routeUrl);
+}
+
+function openMapPicker(url = "https://www.google.com/maps") {
+  openExternalUrl(url);
+  return true;
+}
+
+function openExternalUrl(url) {
+  if (!url) return;
+  openInNewTab(url);
 }
 
 function extractLatLng(text) {
@@ -349,52 +666,86 @@ function haversineKm(a, b) {
 function getDriveTimeLabel(fromName, toName) {
   const from = extractLatLng(fromName);
   const to = extractLatLng(toName);
-  if (!from || !to) return "予測時間";
+  if (!from || !to) return "予測";
   const km = haversineKm(from, to);
   const roadKm = km * 1.25;
   const minutes = Math.max(1, Math.round((roadKm / 40) * 60));
-  return `予測時間: 約${minutes}分`;
+  return `予測 ${formatMinutesShort(minutes)}`;
 }
 
 function saveOriginHistory(origin) {
   const normalized = origin.trim();
   if (!normalized) return;
-  state.originHistory = [normalized, ...state.originHistory.filter((item) => item !== normalized)].slice(0, 10);
-  saveJson("ntt-origin-history", state.originHistory);
+  state.placeHistory = [normalized, ...state.placeHistory.filter((item) => item !== normalized)].slice(0, 50);
+  saveJson("ntt-place-history", state.placeHistory);
   renderOriginHistory();
   renderOriginInlineEditor();
+  refreshAllDayHistoryDropdownCaches();
 }
 
 function saveDefaultOrigin(value) {
   const normalized = (value || "").trim();
   state.defaultOrigin = normalized;
-  localStorage.setItem("ntt-default-origin", normalized);
+  setStorageItemSafe("ntt-default-origin", normalized);
+  refreshOriginInputPlaceholders();
+}
+
+function refreshOriginInputPlaceholders() {
+  const placeholder = (state.defaultOrigin || "").trim() || "出発地";
+  document.querySelectorAll("input[list='origin-history']").forEach((input) => {
+    input.placeholder = placeholder;
+  });
+}
+
+function normalizeUrlValue(rawUrl) {
+  const raw = String(rawUrl || "").trim();
+  if (!raw) return "";
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    return new URL(withScheme).toString();
+  } catch {
+    return raw;
+  }
+}
+
+function createStableId(prefix = "id") {
+  const maybeCrypto = typeof globalThis !== "undefined" ? globalThis.crypto : null;
+  if (maybeCrypto && typeof maybeCrypto.randomUUID === "function") {
+    return maybeCrypto.randomUUID();
+  }
+  const time = Date.now().toString(36);
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `${prefix}-${time}-${rand}`;
 }
 
 function saveHotelUrlHistory(url, preferredName = "") {
-  const normalized = url.trim();
+  const normalized = normalizeUrlValue(url);
   if (!normalized) return;
-  const existing = state.hotelUrlHistory.find((item) => item.url === normalized);
+  const existing = state.hotelUrlHistory.find((item) => normalizeUrlValue(item.url) === normalized);
   const parsed = buildHotelFromUrl(normalized);
   const displayName = existing?.name || preferredName.trim() || parsed?.name || normalized;
   saveHotelUrlHistoryEntry(normalized, displayName);
 }
 
 function saveHotelUrlHistoryEntry(url, name) {
-  const normalizedUrl = (url || "").trim();
+  const normalizedUrl = normalizeUrlValue(url);
   if (!normalizedUrl) return;
   const normalizedName = (name || "").trim() || normalizedUrl;
   const next = { url: normalizedUrl, name: normalizedName };
-  state.hotelUrlHistory = [next, ...state.hotelUrlHistory.filter((item) => item.url !== normalizedUrl)].slice(0, 20);
+  state.hotelUrlHistory = [
+    next,
+    ...state.hotelUrlHistory.filter((item) => normalizeUrlValue(item.url) !== normalizedUrl),
+  ].slice(0, 20);
   saveJson("ntt-hotel-url-history", state.hotelUrlHistory);
+  refreshAllDayHistoryDropdownCaches();
 }
 
 function renameHotelUrlHistoryEntry(url, nextName) {
-  const normalizedUrl = (url || "").trim();
+  const normalizedUrl = normalizeUrlValue(url);
   const normalizedName = (nextName || "").trim();
   if (!normalizedUrl || !normalizedName) return;
   state.hotelUrlHistory = state.hotelUrlHistory.map((item) =>
-    item.url === normalizedUrl ? { ...item, name: normalizedName } : item,
+    normalizeUrlValue(item.url) === normalizedUrl ? { ...item, url: normalizeUrlValue(item.url), name: normalizedName } : item,
   );
   saveJson("ntt-hotel-url-history", state.hotelUrlHistory);
 }
@@ -404,6 +755,7 @@ function savePlaceHistory(name) {
   if (!normalized) return;
   state.placeHistory = [normalized, ...state.placeHistory.filter((item) => item !== normalized)].slice(0, 50);
   saveJson("ntt-place-history", state.placeHistory);
+  refreshAllDayHistoryDropdownCaches();
 }
 
 function findHotelUrlHistoryByName(name) {
@@ -415,36 +767,48 @@ function findHotelUrlHistoryByName(name) {
 function ensureHotelInListFromHistoryName(name) {
   const historyEntry = findHotelUrlHistoryByName(name);
   if (!historyEntry || !historyEntry.url) return null;
-  const existing = state.hotels.find((hotel) => hotel.url === historyEntry.url);
+  const targetUrl = normalizeUrlValue(historyEntry.url);
+  const existing = state.hotels.find((hotel) => normalizeUrlValue(hotel.url) === targetUrl);
   if (existing) {
     return existing;
   }
-  const item = buildHotelFromUrl(historyEntry.url, historyEntry.name || name);
+  const item = buildHotelFromUrl(targetUrl, historyEntry.name || name);
   if (!item) return null;
   state.hotels.push(item);
   return item;
 }
 
 function getHistoryByTarget(target) {
-  if (target === "origin") return state.originHistory;
+  if (target === "origin") return state.placeHistory;
   if (target === "hotelUrl") return state.hotelUrlHistory;
   return state.placeHistory;
 }
 
+function getPlaceHistoryWithStart() {
+  const merged = [(state.defaultOrigin || "").trim(), ...(state.placeHistory || [])]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  return [...new Set(merged)];
+}
+
 function setHistoryByTarget(target, list) {
   if (target === "origin") {
-    state.originHistory = list;
-    saveJson("ntt-origin-history", state.originHistory);
+    state.placeHistory = list;
+    saveJson("ntt-place-history", state.placeHistory);
     renderOriginHistory();
+    renderOriginInlineEditor();
+    refreshAllDayHistoryDropdownCaches();
     return;
   }
   if (target === "hotelUrl") {
     state.hotelUrlHistory = list;
     saveJson("ntt-hotel-url-history", state.hotelUrlHistory);
+    refreshAllDayHistoryDropdownCaches();
     return;
   }
   state.placeHistory = list;
   saveJson("ntt-place-history", state.placeHistory);
+  refreshAllDayHistoryDropdownCaches();
 }
 
 function replacePlaceHistoryName(prevName, nextName) {
@@ -457,6 +821,33 @@ function replacePlaceHistoryName(prevName, nextName) {
     .slice(0, 49);
   state.placeHistory.unshift(next);
   saveJson("ntt-place-history", state.placeHistory);
+}
+
+function renamePlaceHistoryEntry(prevName, nextNameRaw) {
+  const prev = (prevName || "").trim();
+  const next = (nextNameRaw || "").trim();
+  if (!prev) return false;
+  if (!next) {
+    setStatus("履歴名は空欄にできません。", true);
+    return false;
+  }
+  if (prev === next) return true;
+  const idx = state.placeHistory.findIndex((item) => (item || "").trim() === prev);
+  if (idx < 0) return false;
+  if (state.placeHistory.some((item, i) => i !== idx && (item || "").trim() === next)) {
+    setStatus("同じ履歴名が既にあります。", true);
+    return false;
+  }
+  state.placeHistory[idx] = next;
+  if (Object.prototype.hasOwnProperty.call(state.historyEditorChecks, prev)) {
+    state.historyEditorChecks[next] = state.historyEditorChecks[prev];
+    delete state.historyEditorChecks[prev];
+  }
+  saveJson("ntt-place-history", state.placeHistory);
+  renderOriginHistory();
+  renderOriginInlineEditor();
+  refreshAllDayHistoryDropdownCaches();
+  return true;
 }
 
 function renderHistoryEditorList() {
@@ -473,6 +864,21 @@ function renderHistoryEditorList() {
       const label = state.historyEditorTarget === "hotelUrl" ? item.name : item;
       const sub = state.historyEditorTarget === "hotelUrl" ? `<small class="muted">${item.url}</small>` : "";
       const checked = Boolean(state.historyEditorChecks[key]);
+      if (state.historyEditorTarget === "place" || state.historyEditorTarget === "origin") {
+        return `
+          <div class="origin-inline-item history-origin-item">
+            <label class="origin-inline-check-wrap">
+              <input type="checkbox" data-history-check="${encodeURIComponent(key)}" ${checked ? "checked" : ""} />
+            </label>
+            <input
+              type="text"
+              class="origin-inline-name-input history-item-input"
+              data-history-name-edit="${encodeURIComponent(key)}"
+              value="${escapeHtml(label)}"
+            />
+          </div>
+        `;
+      }
       return `
         <label class="history-item">
           <input type="checkbox" data-history-check="${encodeURIComponent(key)}" ${checked ? "checked" : ""} />
@@ -483,17 +889,127 @@ function renderHistoryEditorList() {
     .join("");
 }
 
-function openHistoryEditor(target = "place") {
+function isInlinePlaceEditorOpen(anchorKey) {
+  return (
+    state.historyEditorTarget === "place" &&
+    state.historyEditorAnchorKey === anchorKey &&
+    !els.historyEditorModal.classList.contains("hidden")
+  );
+}
+
+function syncPlaceInlineEditorButtons() {
+  if (els.destinationHistoryEditBtn) {
+    const open = isInlinePlaceEditorOpen("destination");
+    els.destinationHistoryEditBtn.textContent = open ? "✕" : "☰";
+    els.destinationHistoryEditBtn.classList.toggle("origin-edit-active", open);
+  }
+
+  document.querySelectorAll("button[data-edit-history]").forEach((btn) => {
+    const key = btn.dataset.editHistory || "";
+    const open = isInlinePlaceEditorOpen(`waypoint:${key}`);
+    btn.textContent = open ? "✕" : "☰";
+    btn.classList.toggle("origin-edit-active", open);
+  });
+}
+
+function openHistoryEditor(target = "place", anchorEl = null, anchorKey = "") {
+  if (target === "place" && anchorEl) {
+    const nextKey = anchorKey || "place-inline";
+    const isOpen = !els.historyEditorModal.classList.contains("hidden");
+    if (isOpen && state.historyEditorTarget === "place" && state.historyEditorAnchorKey === nextKey) {
+      closeHistoryEditor();
+      return;
+    }
+    state.historyEditorAnchorKey = nextKey;
+    state.historyEditorTarget = "place";
+    state.historyEditorChecks = {};
+    const hostRow = anchorEl.closest(".route-history-tools, .goal-action-row");
+    const host = hostRow ? hostRow.parentElement : anchorEl.closest(".route-waypoint-body, .section-body");
+    if (hostRow && host) {
+      hostRow.insertAdjacentElement("afterend", els.historyEditorModal);
+    } else if (host) {
+      host.prepend(els.historyEditorModal);
+    }
+    els.historyEditorModal.classList.add("inline-history-accordion");
+    els.historyEditorModal.classList.remove("hidden");
+    els.historyEditorModal.setAttribute("aria-hidden", "false");
+    renderHistoryEditorList();
+    syncPlaceInlineEditorButtons();
+    return;
+  }
+
+  state.historyEditorAnchorKey = anchorKey || "";
   state.historyEditorTarget = target;
   state.historyEditorChecks = {};
   els.historyEditorModal.classList.remove("hidden");
+  els.historyEditorModal.classList.remove("inline-history-accordion");
   els.historyEditorModal.setAttribute("aria-hidden", "false");
+  const panel = els.historyEditorModal.querySelector(".history-modal-panel");
+  if (anchorEl instanceof Element) {
+    const rect = anchorEl.getBoundingClientRect();
+    const host = anchorEl.closest(".section-body, .route-waypoint-body, .goal-action-row, .origin-action-row") || document.body;
+    const hostRect = host.getBoundingClientRect();
+    const panelWidth = Math.min(560, Math.max(320, Math.min(hostRect.width, window.innerWidth - 24)));
+    const left = Math.min(
+      Math.max(12, rect.left),
+      Math.max(12, window.innerWidth - panelWidth - 12),
+    );
+    const top = Math.min(rect.bottom + 8, Math.max(12, window.innerHeight - 120));
+    els.historyEditorModal.style.left = `${left}px`;
+    els.historyEditorModal.style.top = `${top}px`;
+    if (panel) panel.style.width = `${panelWidth}px`;
+  } else {
+    els.historyEditorModal.style.left = "12px";
+    els.historyEditorModal.style.top = "72px";
+    if (panel) panel.style.width = "";
+  }
   renderHistoryEditorList();
+  syncPlaceInlineEditorButtons();
 }
 
 function closeHistoryEditor() {
   els.historyEditorModal.classList.add("hidden");
+  els.historyEditorModal.classList.remove("inline-history-accordion");
   els.historyEditorModal.setAttribute("aria-hidden", "true");
+  state.historyEditorAnchorKey = "";
+  if (els.historyEditorModal.parentElement !== document.body) {
+    document.body.appendChild(els.historyEditorModal);
+  }
+  syncPlaceInlineEditorButtons();
+}
+
+function ensureHistoryClearButtons() {
+  const originActions = document.querySelector(".origin-inline-actions");
+  if (originActions && !originActions.querySelector("#origin-inline-clear-all")) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "origin-inline-clear-all";
+    btn.className = "ghost";
+    btn.textContent = "クリア";
+    const selectAllBtn = originActions.querySelector("#origin-inline-select-all");
+    if (selectAllBtn) {
+      selectAllBtn.insertAdjacentElement("afterend", btn);
+    } else {
+      originActions.prepend(btn);
+    }
+    els.originInlineClearAll = btn;
+  }
+
+  const historyActions = document.querySelector(".history-modal-actions");
+  if (historyActions && !historyActions.querySelector("#history-clear-all")) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "history-clear-all";
+    btn.className = "ghost tiny";
+    btn.textContent = "クリア";
+    const selectAllBtn = historyActions.querySelector("#history-select-all");
+    if (selectAllBtn) {
+      selectAllBtn.insertAdjacentElement("afterend", btn);
+    } else {
+      historyActions.prepend(btn);
+    }
+    els.historyClearAll = btn;
+  }
 }
 
 function renderOriginHistory() {
@@ -501,26 +1017,142 @@ function renderOriginHistory() {
   els.originHistory.innerHTML = state.originHistory.map((o) => `<option value="${o}"></option>`).join("");
 }
 
+function renderOriginUrlCandidates() {
+  if (!els.originUrlCandidates) return;
+  const list = Array.isArray(state.originUrlCandidates) ? state.originUrlCandidates : [];
+  if (!list.length) {
+    els.originUrlCandidates.classList.add("hidden");
+    els.originUrlCandidates.innerHTML = "";
+    return;
+  }
+  els.originUrlCandidates.classList.remove("hidden");
+  els.originUrlCandidates.innerHTML = list
+    .map(
+      (candidate) =>
+        `<button type="button" class="ghost tiny" data-apply-origin-url-candidate="${encodeURIComponent(candidate)}">${escapeHtml(candidate)}</button>`,
+    )
+    .join("");
+}
+
+function renderDestinationUrlCandidates() {
+  if (!els.destinationUrlCandidates) return;
+  const list = Array.isArray(state.destinationUrlCandidates) ? state.destinationUrlCandidates : [];
+  if (!list.length) {
+    els.destinationUrlCandidates.classList.add("hidden");
+    els.destinationUrlCandidates.innerHTML = "";
+    return;
+  }
+  els.destinationUrlCandidates.classList.remove("hidden");
+  els.destinationUrlCandidates.innerHTML = list
+    .map(
+      (candidate) =>
+        `<button type="button" class="ghost tiny" data-apply-destination-url-candidate="${encodeURIComponent(candidate)}">${escapeHtml(candidate)}</button>`,
+    )
+    .join("");
+}
+
+function renderDestinationNameCandidates() {
+  if (!els.destinationNameCandidates) return;
+  const list = Array.isArray(state.destinationNameCandidates) ? state.destinationNameCandidates : [];
+  if (!list.length) {
+    els.destinationNameCandidates.classList.add("hidden");
+    els.destinationNameCandidates.innerHTML = "";
+    if (els.destinationNameSuggestBtn) {
+      els.destinationNameSuggestBtn.textContent = "名称候補";
+      els.destinationNameSuggestBtn.classList.remove("route-btn-green-active");
+      els.destinationNameSuggestBtn.classList.add("route-btn-green");
+    }
+    return;
+  }
+  els.destinationNameCandidates.classList.remove("hidden");
+  els.destinationNameCandidates.innerHTML = list
+    .map(
+      (candidate) =>
+        `<button type="button" class="ghost tiny" data-apply-destination-name-candidate="${encodeURIComponent(candidate)}">${escapeHtml(candidate)}</button>`,
+    )
+    .join("");
+  if (els.destinationNameSuggestBtn) {
+    els.destinationNameSuggestBtn.textContent = "閉じる";
+    els.destinationNameSuggestBtn.classList.remove("route-btn-green");
+    els.destinationNameSuggestBtn.classList.add("route-btn-green-active");
+  }
+}
+
+function suggestCandidatesFromPastedUrl(target, sourceUrl = "") {
+  const url = (sourceUrl || "").trim();
+  if (!url) return;
+  const candidates = extractNameCandidatesFromUrl(url);
+  if (!candidates.length) {
+    setStatus("URLから候補を抽出できませんでした。", true);
+    return;
+  }
+  if (target === "origin") {
+    state.originUrlCandidates = candidates;
+    renderOriginUrlCandidates();
+  } else {
+    state.destinationUrlCandidates = candidates;
+    renderDestinationUrlCandidates();
+  }
+  setStatus("URLから名称候補を取得しました。候補ボタンで反映できます。");
+}
+
+function openMapAndShowUrlInput(target) {
+  void target;
+  openMapPicker("https://www.google.com/maps");
+}
+
 function setOriginInlineEditMode(enabled) {
   state.originInlineEditMode = Boolean(enabled);
-  if (!els.originHistoryEditBtn || !els.defaultOriginInput || !els.saveDefaultOriginBtn) return;
-  els.originHistoryEditBtn.textContent = state.originInlineEditMode ? "✕" : "☰";
-  els.originHistoryEditBtn.classList.toggle("origin-edit-active", state.originInlineEditMode);
+  if (!els.defaultOriginInput || !els.saveDefaultOriginBtn) return;
   els.defaultOriginInput.readOnly = !state.originInlineEditMode;
   if (!state.originInlineEditMode) {
     els.defaultOriginInput.value = state.defaultOrigin || "";
   }
-  els.saveDefaultOriginBtn.textContent = state.originInlineEditMode ? "SELECT" : "DEFAULT";
+  els.saveDefaultOriginBtn.textContent = "DEFAULT";
+}
+
+function syncOriginInlineEditorButtons() {
+  const isOpen = els.originInlineEditor && !els.originInlineEditor.classList.contains("hidden");
+  document.querySelectorAll("button[data-day-role='origin-history-edit-btn']").forEach((btn) => {
+    const card = btn.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    const key = Number.isInteger(dayIndex) ? `origin-day:${dayIndex}` : "";
+    const active = Boolean(isOpen && key && state.originInlineAnchorKey === key);
+    btn.textContent = active ? "✕" : "☰";
+    btn.classList.toggle("origin-edit-active", active);
+  });
+}
+
+function openOriginInlineEditorAt(anchorEl, anchorKey = "") {
+  if (!anchorEl || !els.originInlineEditor) return;
+  const nextKey = anchorKey || "origin-inline";
+  const isOpen = !els.originInlineEditor.classList.contains("hidden");
+  if (isOpen && state.originInlineAnchorKey === nextKey) {
+    setOriginInlineEditorOpen(false);
+    return;
+  }
+  const hostRow = anchorEl.closest(".origin-action-row, .route-history-tools, .goal-action-row");
+  const host = hostRow ? hostRow.parentElement : anchorEl.closest(".section-body, .route-waypoint-body");
+  if (hostRow && host) {
+    hostRow.insertAdjacentElement("afterend", els.originInlineEditor);
+  } else if (host) {
+    host.prepend(els.originInlineEditor);
+  }
+  state.originInlineAnchorKey = nextKey;
+  setOriginInlineEditorOpen(true);
+  syncOriginInlineEditorButtons();
 }
 
 function renderOriginInlineEditor() {
   if (!els.originInlineHistoryList || !els.defaultOriginInput) return;
   const defaultName = (state.defaultOrigin || "").trim();
-  const historyList = (state.originHistory || []).filter((name) => name && name !== defaultName);
+  const historyList = (state.originHistory || [])
+    .map((name, sourceIndex) => ({ name, sourceIndex }))
+    .filter(({ name }) => name && name !== defaultName);
   if (!defaultName && historyList.length) {
-    saveDefaultOrigin(historyList[0]);
-    state.originHistory = historyList.slice(1);
-    saveJson("ntt-origin-history", state.originHistory);
+    saveDefaultOrigin(historyList[0].name);
+    state.originHistory = historyList.slice(1).map((item) => item.name);
+    saveJson("ntt-place-history", state.originHistory);
   }
 
   const safeDefault = state.defaultOrigin || "";
@@ -530,9 +1162,13 @@ function renderOriginInlineEditor() {
   if (defaultCheckbox) {
     defaultCheckbox.checked = checkedDefault;
   }
+  if (els.saveDefaultOriginBtn) {
+    els.saveDefaultOriginBtn.classList.add("is-default");
+    els.saveDefaultOriginBtn.classList.remove("is-not-default");
+  }
 
   els.originInlineHistoryList.innerHTML = historyList
-    .map((name, idx) => {
+    .map(({ name, sourceIndex }, idx) => {
       const key = encodeURIComponent(name);
       const checked = Boolean(state.originInlineChecks[name]);
       return `
@@ -540,11 +1176,53 @@ function renderOriginInlineEditor() {
           <label class="origin-inline-check-wrap">
             <input type="checkbox" data-origin-inline-check-name="${key}" ${checked ? "checked" : ""} />
           </label>
-          <span class="origin-inline-name">${name}</span>
+          <input
+            type="text"
+            class="origin-inline-name-input"
+            data-origin-inline-source-index="${sourceIndex}"
+            value="${escapeHtml(name)}"
+          />
+          <button
+            type="button"
+            class="origin-default-btn is-not-default"
+            data-set-default-origin="${key}"
+          >DEFAULT</button>
         </div>
       `;
     })
     .join("");
+}
+
+function renameOriginHistoryBySourceIndex(sourceIndex, nextNameRaw) {
+  const idx = Number(sourceIndex);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= state.originHistory.length) return;
+  const prev = (state.originHistory[idx] || "").trim();
+  const next = (nextNameRaw || "").trim();
+  if (!prev) return;
+  if (!next) {
+    setStatus("履歴名は空欄にできません。", true);
+    renderOriginInlineEditor();
+    return;
+  }
+  if (prev === next) return;
+  if (next === (state.defaultOrigin || "").trim()) {
+    state.originHistory = state.originHistory.filter((name, i) => i !== idx);
+  } else if (state.originHistory.some((name, i) => i !== idx && (name || "").trim() === next)) {
+    setStatus("同じ履歴名が既にあります。", true);
+    renderOriginInlineEditor();
+    return;
+  } else {
+    state.originHistory[idx] = next;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(state.originInlineChecks, prev)) {
+    state.originInlineChecks[next] = state.originInlineChecks[prev];
+    delete state.originInlineChecks[prev];
+  }
+  saveJson("ntt-place-history", state.originHistory);
+  renderOriginHistory();
+  renderOriginInlineEditor();
+  setStatus("履歴名を更新しました。");
 }
 
 function setOriginInlineEditorOpen(isOpen) {
@@ -554,7 +1232,10 @@ function setOriginInlineEditorOpen(isOpen) {
   if (isOpen) {
     state.originInlineChecks = {};
     renderOriginInlineEditor();
+  } else {
+    state.originInlineAnchorKey = "";
   }
+  syncOriginInlineEditorButtons();
 }
 
 function applyDefaultOriginFromInput(value) {
@@ -584,13 +1265,29 @@ function moveOriginHistoryEntryToDefault(name) {
     .map((item) => (item || "").trim())
     .filter((item) => item && item !== normalized);
   saveDefaultOrigin(normalized);
-  state.originHistory = nextHistory.slice(0, 10);
-  saveJson("ntt-origin-history", state.originHistory);
+  state.originHistory = nextHistory.slice(0, 50);
+  saveJson("ntt-place-history", state.originHistory);
+  if (els.originInput) {
+    els.originInput.value = normalized;
+  }
+  if (Number.isInteger(state.activeDayIndex) && state.activeDayIndex >= 0 && state.activeDayIndex < state.transportDays.length) {
+    state.transportDays[state.activeDayIndex].origin = normalized;
+  }
   renderOriginHistory();
   renderOriginInlineEditor();
+  renderRouteList();
+  renderTransportDetail();
 }
 
 function normalizeStoredHistories() {
+  state.placeHistory = [...(state.placeHistory || []), ...loadJson("ntt-origin-history", [])]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .filter((item, idx, arr) => arr.indexOf(item) === idx)
+    .slice(0, 50);
+  saveJson("ntt-place-history", state.placeHistory);
+  removeStorageItemSafe("ntt-origin-history");
+
   state.hotelUrlHistory = (state.hotelUrlHistory || [])
     .map((item) => {
       if (typeof item === "string") {
@@ -608,7 +1305,10 @@ function normalizeStoredHistories() {
 }
 
 function renderTopHistoryDropdown(target) {
-  const list = getHistoryByTarget(target);
+  let list = getHistoryByTarget(target);
+  if (target === "origin" || target === "destination") {
+    list = getPlaceHistoryWithStart();
+  }
   const dropdown =
     target === "origin"
       ? els.originHistoryDropdown
@@ -638,7 +1338,10 @@ function renderTopHistoryDropdown(target) {
 
 function renderTopHistoryDropdownForElement(target, dropdown) {
   if (!dropdown) return;
-  const list = getHistoryByTarget(target);
+  let list = getHistoryByTarget(target);
+  if (target === "origin" || target === "destination") {
+    list = getPlaceHistoryWithStart();
+  }
   if (!list.length) {
     dropdown.innerHTML = "<span class='muted'>履歴がありません</span>";
     return;
@@ -655,10 +1358,42 @@ function renderTopHistoryDropdownForElement(target, dropdown) {
     .join("");
 }
 
+function refreshAllDayHistoryDropdownCaches() {
+  const cards = ensureDayCardAccordionStructure();
+  cards.forEach((card) => {
+    const originDropdown = card.querySelector("[data-day-role='origin-history-dropdown']");
+    const destinationDropdown = card.querySelector("[data-day-role='destination-history-dropdown']");
+    const hotelUrlDropdown = card.querySelector("[data-day-role='hotel-url-history-dropdown']");
+    if (originDropdown) renderTopHistoryDropdownForElement("origin", originDropdown);
+    if (destinationDropdown) renderTopHistoryDropdownForElement("destination", destinationDropdown);
+    if (hotelUrlDropdown) renderTopHistoryDropdownForElement("hotelUrl", hotelUrlDropdown);
+  });
+}
+
+function setDayHistoryButtonState(card, target, isOpen) {
+  if (!card) return;
+  const role =
+    target === "origin"
+      ? "origin-history-btn"
+      : target === "destination"
+        ? "destination-history-btn"
+        : "hotel-url-history-btn";
+  const btn = card.querySelector(`[data-day-role='${role}']`);
+  if (!btn) return;
+  btn.textContent = isOpen ? "閉じる" : "履歴";
+  btn.classList.toggle("history-toggle-active", isOpen);
+}
+
 function closeAllDayHistoryDropdowns() {
   document
     .querySelectorAll("[data-day-role='origin-history-dropdown'], [data-day-role='destination-history-dropdown'], [data-day-role='hotel-url-history-dropdown']")
     .forEach((el) => el.classList.add("hidden"));
+  const cards = ensureDayCardAccordionStructure();
+  cards.forEach((card) => {
+    setDayHistoryButtonState(card, "origin", false);
+    setDayHistoryButtonState(card, "destination", false);
+    setDayHistoryButtonState(card, "hotelUrl", false);
+  });
 }
 
 function applyCurrentLocationToDay(dayIndex) {
@@ -709,8 +1444,10 @@ function toggleDayHistoryDropdown(card, target) {
   if (willOpen) {
     renderTopHistoryDropdownForElement(target, dropdown);
     dropdown.classList.remove("hidden");
+    setDayHistoryButtonState(card, target, true);
   } else {
     dropdown.classList.add("hidden");
+    setDayHistoryButtonState(card, target, false);
   }
 }
 
@@ -731,6 +1468,15 @@ function toggleTopHistoryDropdown(target) {
   if (els.destinationHistoryDropdown) {
     els.destinationHistoryDropdown.classList.toggle("hidden", state.activeTopHistoryDropdown !== "destination");
   }
+
+  const setTopBtn = (btn, isOpen) => {
+    if (!btn) return;
+    btn.textContent = isOpen ? "閉じる" : "履歴";
+    btn.classList.toggle("history-toggle-active", isOpen);
+  };
+  setTopBtn(els.originHistoryBtn, state.activeTopHistoryDropdown === "origin");
+  setTopBtn(els.destinationHistoryBtn, state.activeTopHistoryDropdown === "destination");
+  setTopBtn(els.hotelUrlHistoryBtn, state.activeTopHistoryDropdown === "hotelUrl");
 }
 
 function closeTopHistoryDropdowns() {
@@ -744,6 +1490,11 @@ function closeTopHistoryDropdowns() {
   if (els.destinationHistoryDropdown) {
     els.destinationHistoryDropdown.classList.add("hidden");
   }
+  [els.originHistoryBtn, els.destinationHistoryBtn, els.hotelUrlHistoryBtn].forEach((btn) => {
+    if (!btn) return;
+    btn.textContent = "履歴";
+    btn.classList.remove("history-toggle-active");
+  });
 }
 
 function calcNights(checkin, checkout) {
@@ -867,7 +1618,7 @@ function buildHotelFromUrl(rawUrl, preferredName = "") {
   const nights = calcNights(checkin, checkout);
 
   return {
-    id: crypto.randomUUID(),
+    id: createStableId("hotel"),
     checkin,
     checkout,
     nights,
@@ -894,8 +1645,10 @@ function sortHotels(list) {
   return sorted;
 }
 
-function isHotelSelectedForActiveDay(hotel) {
-  const points = (state.transportPlan?.points || []).map(ensurePointObject);
+function isHotelSelectedForDay(dayIndex, hotel) {
+  const day = state.transportDays[dayIndex];
+  if (!day) return false;
+  const points = (day.points || []).map(ensurePointObject);
   const destination = points.find((p) => p.isDestination);
   if (!destination) return false;
   if (destination.url && hotel.url) {
@@ -904,16 +1657,11 @@ function isHotelSelectedForActiveDay(hotel) {
   return destination.name.trim() === hotel.name.trim();
 }
 
-function renderHotelResults() {
-  if (!state.hotels.length) {
-    els.hotelResults.innerHTML = "<div class='hotel-empty'>登録がありません</div>";
-    return;
-  }
-
+function buildHotelResultsHtml(dayIndex) {
   const sorted = sortHotels(state.hotels);
-  els.hotelResults.innerHTML = sorted
+  return sorted
     .map((h) => {
-      const isSelected = isHotelSelectedForActiveDay(h);
+      const isSelected = isHotelSelectedForDay(dayIndex, h);
       const isExpanded = Boolean(state.hotelExpanded[h.id]);
       const selectedClass = isSelected ? "is-selected" : "is-unselected";
       return `
@@ -926,24 +1674,10 @@ function renderHotelResults() {
           </div>
           <div class="hotel-choice-detail ${isExpanded ? "" : "hidden"}">
             <div class="hotel-detail-summary">
-              <button type="button" class="ghost tiny" data-search-hotel-name="${h.id}">名称候補検索</button>
-              <button type="button" class="ghost tiny" data-close-hotel-candidates="${h.id}">候補を閉じる</button>
               <span>宿泊見積：<strong>¥${h.total.toLocaleString()}</strong>（${h.nights}泊）</span>
               <span>/</span>
               <span>${h.people}名</span>
             </div>
-            ${
-              Array.isArray(h.candidates) && h.candidates.length
-                ? `<div class="hotel-name-candidates">
-                    ${h.candidates
-                      .map(
-                        (candidate) =>
-                          `<button type="button" class="ghost tiny" data-apply-hotel-candidate="${h.id}" data-candidate-name="${encodeURIComponent(candidate)}">${escapeHtml(candidate)}</button>`,
-                      )
-                      .join("")}
-                  </div>`
-                : ""
-            }
             <div class="hotel-detail-actions">
               <a class="hotel-action-btn" href="${h.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(h.site)}</a>
               <button type="button" class="hotel-action-btn" data-google-search-hotel="${h.id}">Google検索</button>
@@ -954,6 +1688,23 @@ function renderHotelResults() {
       `;
     })
     .join("");
+}
+
+function renderHotelResults() {
+  const cards = ensureDayCardAccordionStructure();
+  const hosts = cards
+    .map((card, index) => ({ host: card.querySelector("[data-day-role='hotel-results']"), dayIndex: index }))
+    .filter((item) => item.host);
+
+  if (!hosts.length && els.hotelResults) {
+    const fallbackDayIndex = Number.isInteger(state.activeDayIndex) ? state.activeDayIndex : 0;
+    els.hotelResults.innerHTML = state.hotels.length ? buildHotelResultsHtml(fallbackDayIndex) : "";
+    return;
+  }
+
+  hosts.forEach(({ host, dayIndex }) => {
+    host.innerHTML = state.hotels.length ? buildHotelResultsHtml(dayIndex) : "";
+  });
 }
 
 function renderSelectedHotel() {
@@ -977,7 +1728,7 @@ function renderSelectedHotel() {
 }
 
 function updateHotelNameById(hotelId, nextNameRaw, options = {}) {
-  const { silent = false } = options;
+  const { silent = false, skipDestinationSync = false } = options;
   const target = state.hotels.find((hotel) => hotel.id === hotelId);
   if (!target) return;
   const nextName = (nextNameRaw || "").trim();
@@ -993,7 +1744,9 @@ function updateHotelNameById(hotelId, nextNameRaw, options = {}) {
   const updated = state.hotels.find((hotel) => hotel.id === hotelId);
   if (state.selectedHotel && state.selectedHotel.id === hotelId) {
     state.selectedHotel = { ...state.selectedHotel, name: nextName };
-    syncDestinationWithHotel(state.selectedHotel);
+    if (!skipDestinationSync) {
+      syncDestinationWithHotel(state.selectedHotel);
+    }
   }
   if (updated) {
     renameHotelUrlHistoryEntry(updated.url, nextName);
@@ -1037,7 +1790,10 @@ function syncDestinationWithHotel(hotel) {
     state.transportPlan.points.push({
       name: destination,
       url: hotel.url || "",
+      note: "",
+      noteExpanded: false,
       candidates: [],
+      expanded: false,
       isDestination: true,
     });
   }
@@ -1053,10 +1809,34 @@ function syncDestinationWithHotel(hotel) {
 function syncDestinationFromInput(destinationName, options = {}) {
   const { saveHistory = true } = options;
   const normalized = (destinationName || "").trim();
-  if (!normalized) return;
 
   normalizeRoutePoints();
   const destinationIndex = state.transportPlan.points.findIndex((p) => ensurePointObject(p).isDestination);
+  if (!normalized) {
+    if (destinationIndex >= 0) {
+      const current = ensurePointObject(state.transportPlan.points[destinationIndex]);
+      state.transportPlan.points[destinationIndex] = {
+        ...current,
+        name: "",
+        isDestination: true,
+      };
+    } else {
+      state.transportPlan.points.push({
+        name: "",
+        url: "",
+        note: "",
+        noteExpanded: false,
+        candidates: [],
+        expanded: false,
+        isDestination: true,
+      });
+    }
+    normalizeRoutePoints();
+    renderRouteList();
+    renderTransportDetail();
+    return;
+  }
+
   if (destinationIndex >= 0) {
     const current = ensurePointObject(state.transportPlan.points[destinationIndex]);
     state.transportPlan.points[destinationIndex] = {
@@ -1068,7 +1848,10 @@ function syncDestinationFromInput(destinationName, options = {}) {
     state.transportPlan.points.push({
       name: normalized,
       url: "",
+      note: "",
+      noteExpanded: false,
       candidates: [],
+      expanded: false,
       isDestination: true,
     });
   }
@@ -1081,6 +1864,101 @@ function syncDestinationFromInput(destinationName, options = {}) {
   renderTransportDetail();
 }
 
+function updateDestinationByInputElement(inputEl, options = {}) {
+  const { render = false, saveHistory = false, save = true } = options;
+  const card = inputEl.closest(".card");
+  const dayIndexRaw = card ? Number(card.dataset.dayCardIndex) : NaN;
+  const dayIndex = Number.isInteger(dayIndexRaw) ? dayIndexRaw : state.activeDayIndex;
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+  const day = state.transportDays[dayIndex];
+  if (!day) return;
+
+  const normalized = (inputEl.value || "").trim();
+  normalizePlanPoints(day);
+  const destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+  const prevDestinationName =
+    destinationIndex >= 0 ? (ensurePointObject(day.points[destinationIndex]).name || "").trim() : "";
+  if (!normalized) {
+    if (destinationIndex >= 0) {
+      const current = ensurePointObject(day.points[destinationIndex]);
+      day.points[destinationIndex] = {
+        ...current,
+        name: "",
+        isDestination: true,
+      };
+    } else {
+      day.points.push({
+        name: "",
+        url: "",
+        note: "",
+        noteExpanded: false,
+        candidates: [],
+        isDestination: true,
+        expanded: false,
+      });
+    }
+    normalizePlanPoints(day);
+  } else if (destinationIndex >= 0) {
+    const current = ensurePointObject(day.points[destinationIndex]);
+    day.points[destinationIndex] = { ...current, name: normalized, isDestination: true };
+  } else {
+    day.points.push({
+      name: normalized,
+      url: "",
+      note: "",
+      noteExpanded: false,
+      candidates: [],
+      isDestination: true,
+      expanded: false,
+    });
+    normalizePlanPoints(day);
+  }
+
+  if (saveHistory && normalized) {
+    savePlaceHistory(normalized);
+    const destinationPoint = day.points.find((p) => ensurePointObject(p).isDestination);
+    const linkedUrl = (destinationPoint?.url || "").trim();
+    if (linkedUrl) {
+      const linkedHotel = state.hotels.find((hotel) => (hotel.url || "").trim() === linkedUrl);
+      if (linkedHotel && linkedHotel.name !== normalized) {
+        updateHotelNameById(linkedHotel.id, normalized, { silent: true, skipDestinationSync: true });
+      } else if (!linkedHotel) {
+        // URL履歴だけ残っているケース（再読み込み後など）でも履歴名を同期する
+        const urlHistoryEntry = (state.hotelUrlHistory || []).find(
+          (entry) => (entry?.url || "").trim() === linkedUrl,
+        );
+        const prevHistoryName = (urlHistoryEntry?.name || prevDestinationName || "").trim();
+        renameHotelUrlHistoryEntry(linkedUrl, normalized);
+        if (prevHistoryName && prevHistoryName !== normalized) {
+          replacePlaceHistoryName(prevHistoryName, normalized);
+        } else {
+          savePlaceHistory(normalized);
+        }
+      }
+    }
+  }
+  renderRouteListIntoDayCard(dayIndex);
+  if (dayIndex === state.activeDayIndex) {
+    if (render) {
+      renderRouteList();
+      renderTransportDetail();
+      if (save) {
+        saveTransportState();
+      }
+      return;
+    }
+    if (save) {
+      saveTransportState();
+    }
+    return;
+  }
+  syncDayCardInputsFromState(dayIndex);
+  renderRouteListIntoDayCard(dayIndex);
+  if (save) {
+    saveTransportState();
+  }
+}
+
 function moveRoutePoint(fromIndex, toIndex) {
   normalizeRoutePoints();
 
@@ -1091,6 +1969,7 @@ function moveRoutePoint(fromIndex, toIndex) {
   const moved = state.transportPlan.points.splice(fromIndex, 1)[0];
   state.transportPlan.points.splice(toIndex, 0, moved);
   normalizeRoutePoints();
+  clearSegmentTimesAroundMove(state.activeDayIndex, fromIndex, toIndex);
 }
 
 function movePointToAnotherDay(fromDay, pointIndex, toDay) {
@@ -1109,6 +1988,8 @@ function movePointToAnotherDay(fromDay, pointIndex, toDay) {
 
   normalizePlanPoints(fromPlan);
   normalizePlanPoints(toPlan);
+  clearSegmentTimesForDay(fromDay);
+  clearSegmentTimesForDay(toDay);
 
   const reflected = toPlan.points.some((p) => {
     const normalized = ensurePointObject(p);
@@ -1119,14 +2000,17 @@ function movePointToAnotherDay(fromDay, pointIndex, toDay) {
 
 function ensurePointObject(point) {
   if (typeof point === "string") {
-    return { name: point, url: "", candidates: [], isDestination: false, expanded: false };
+    return { name: point, url: "", note: "", noteExpanded: false, candidates: [], isDestination: false, expanded: false, checked: false };
   }
   return {
     name: point?.name || "",
     url: point?.url || "",
+    note: point?.note || "",
+    noteExpanded: Boolean(point?.noteExpanded),
     candidates: Array.isArray(point?.candidates) ? point.candidates : [],
     isDestination: Boolean(point?.isDestination),
     expanded: Boolean(point?.expanded),
+    checked: Boolean(point?.checked),
   };
 }
 
@@ -1154,6 +2038,40 @@ function normalizeCandidate(text) {
     .replace(/[-_]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function extractNameCandidatesFromUrl(rawUrl) {
+  const value = String(rawUrl || "").trim();
+  if (!value) return [];
+
+  let urlObj;
+  try {
+    urlObj = new URL(value);
+  } catch {
+    return [];
+  }
+
+  const chunks = [];
+  const params = urlObj.searchParams;
+  ["q", "query", "destination", "origin", "place", "name", "text", "daddr", "saddr"].forEach((key) => {
+    const paramValue = params.get(key);
+    if (paramValue) chunks.push(paramValue);
+  });
+
+  urlObj.pathname
+    .split("/")
+    .map((part) => decodeURIComponent(part || ""))
+    .filter(Boolean)
+    .forEach((part) => chunks.push(part));
+
+  const prepared = chunks
+    .flatMap((chunk) => String(chunk).split(/[|,/]/))
+    .map((item) => normalizeCandidate(item))
+    .map((item) => item.replace(/^\+?\d+(?:\.\d+)?\s*,\s*\+?\d+(?:\.\d+)?$/, ""))
+    .map((item) => item.replace(/\b(map|maps|place|search|dir|route|api)\b/gi, "").trim())
+    .filter((item) => item.length >= 2);
+
+  return [...new Set(prepared)].slice(0, 8);
 }
 
 async function fetchGoogleSuggestions(query) {
@@ -1199,10 +2117,13 @@ async function fetchGoogleSuggestions(query) {
   });
 }
 
-function getTransportModel() {
-  const origin = (state.transportPlan?.origin || "").trim();
-  normalizeRoutePoints();
-  const points = state.transportPlan.points.map(ensurePointObject);
+function getTransportModelForDay(dayIndex = state.activeDayIndex) {
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return null;
+  const day = state.transportDays[dayIndex];
+  if (!day) return null;
+  normalizePlanPoints(day);
+  const origin = (day.origin || "").trim();
+  const points = (day.points || []).map(ensurePointObject);
   const destinationPoint = points.find((p) => p.isDestination) || points[points.length - 1];
   const destination = destinationPoint ? destinationPoint.name : "";
 
@@ -1222,6 +2143,27 @@ function getTransportModel() {
     time: 0,
     mapsUrl,
   };
+}
+
+function getTransportModel() {
+  return getTransportModelForDay(state.activeDayIndex);
+}
+
+function resolveDayIndexFromNode(node) {
+  const card = node?.closest ? node.closest(".card") : null;
+  if (!card) {
+    return Number.isInteger(state.activeDayIndex) ? state.activeDayIndex : 0;
+  }
+  const byDataset = Number(card.dataset.dayCardIndex);
+  if (Number.isInteger(byDataset) && byDataset >= 0 && byDataset < state.transportDays.length) {
+    return byDataset;
+  }
+  const cards = ensureDayCardAccordionStructure();
+  const byPosition = cards.indexOf(card);
+  if (byPosition >= 0 && byPosition < state.transportDays.length) {
+    return byPosition;
+  }
+  return Number.isInteger(state.activeDayIndex) ? state.activeDayIndex : 0;
 }
 
 function buildRouteSegments(plan = state.transportPlan) {
@@ -1250,6 +2192,7 @@ function buildRouteSegments(plan = state.transportPlan) {
 }
 
 function renderSegmentDetail(segment) {
+  if (!els.transportDetail) return;
   if (!segment) return;
   els.transportDetail.classList.remove("muted");
   els.transportDetail.innerHTML = `
@@ -1263,18 +2206,101 @@ function setActiveDay(dayIndex) {
   if (!Number.isInteger(dayIndex)) return;
   if (dayIndex < 0 || dayIndex >= state.transportDays.length) return;
   state.activeDayIndex = dayIndex;
-  const title = document.querySelector("#day-sections > .card > .section-head h2");
-  if (title) {
-    title.textContent = `DAY${dayIndex + 1}`;
-  }
-  els.originInput.value = state.transportPlan.origin || "";
-  if (els.destinationInput) {
-    const destinationPoint = (state.transportPlan.points || [])
-      .map(ensurePointObject)
-      .find((point) => point.isDestination);
-    els.destinationInput.value = destinationPoint?.name || "";
+  const cards = ensureDayCardAccordionStructure();
+  const card = cards[dayIndex];
+  if (card) {
+    const originInput = card.querySelector("input[data-day-role='origin-input']");
+    if (originInput) {
+      originInput.value = state.transportPlan.origin || "";
+    }
+    const originNoteInput = card.querySelector("textarea[data-day-role='origin-note-input']");
+    const originNoteWrap = card.querySelector("[data-day-role='origin-note-wrap']");
+    if (originNoteInput) {
+      originNoteInput.value = state.transportPlan.originNote || "";
+    }
+    if (originNoteWrap) {
+      originNoteWrap.classList.toggle("hidden", !state.transportPlan.originNoteExpanded);
+    }
+    const destinationInput = card.querySelector("input[data-day-role='destination-input']");
+    const destinationNoteInput = card.querySelector("textarea[data-day-role='destination-note-input']");
+    const destinationNoteWrap = card.querySelector("[data-day-role='destination-note-wrap']");
+    if (destinationInput) {
+      const destinationPoint = (state.transportPlan.points || [])
+        .map(ensurePointObject)
+        .find((point) => point.isDestination);
+      destinationInput.value = destinationPoint?.name || "";
+      if (destinationNoteInput) {
+        destinationNoteInput.value = destinationPoint?.note || "";
+      }
+      if (destinationNoteWrap) {
+        destinationNoteWrap.classList.toggle("hidden", !destinationPoint?.noteExpanded);
+      }
+    }
   }
   saveTransportState();
+}
+
+function syncDayCardInputsFromState(dayIndex) {
+  const cards = ensureDayCardAccordionStructure();
+  const card = cards[dayIndex];
+  const day = state.transportDays[dayIndex];
+  if (!card || !day) return;
+
+  const originInput = card.querySelector("input[data-day-role='origin-input']");
+  if (originInput) {
+    originInput.value = day.origin || "";
+  }
+  const originNoteInput = card.querySelector("textarea[data-day-role='origin-note-input']");
+  if (originNoteInput) {
+    originNoteInput.value = day.originNote || "";
+    autoResizeNoteTextarea(originNoteInput);
+  }
+  const originNoteWrap = card.querySelector("[data-day-role='origin-note-wrap']");
+  const originNoteToggleBtn = card.querySelector("button[data-day-role='origin-note-toggle']");
+  if (originNoteWrap) {
+    originNoteWrap.classList.toggle("hidden", !day.originNoteExpanded);
+  }
+  if (originNoteToggleBtn) {
+    originNoteToggleBtn.textContent = day.originNoteExpanded ? "備考閉" : "備考";
+    originNoteToggleBtn.classList.toggle("note-toggle-active", day.originNoteExpanded);
+  }
+
+  const destinationInput = card.querySelector("input[data-day-role='destination-input']");
+  const destinationNoteInput = card.querySelector("textarea[data-day-role='destination-note-input']");
+  const destinationNoteWrap = card.querySelector("[data-day-role='destination-note-wrap']");
+  const destinationNoteToggleBtn = card.querySelector("button[data-day-role='destination-note-toggle']");
+  if (destinationInput) {
+    const destinationPoint = (day.points || [])
+      .map(ensurePointObject)
+      .find((point) => point.isDestination);
+    destinationInput.value = destinationPoint?.name || "";
+    if (destinationNoteInput) {
+      destinationNoteInput.value = destinationPoint?.note || "";
+      autoResizeNoteTextarea(destinationNoteInput);
+    }
+    if (destinationNoteWrap) {
+      destinationNoteWrap.classList.toggle("hidden", !destinationPoint?.noteExpanded);
+    }
+    if (destinationNoteToggleBtn) {
+      const isOpen = Boolean(destinationPoint?.noteExpanded);
+      destinationNoteToggleBtn.textContent = isOpen ? "備考閉" : "備考";
+      destinationNoteToggleBtn.classList.toggle("note-toggle-active", isOpen);
+    }
+  }
+
+  const dayHeaderTime = card.querySelector("select[data-day-role='day-header-time-select']");
+  if (dayHeaderTime) {
+    dayHeaderTime.innerHTML = buildHeaderEstimateOptions(day.headerEstimate || "");
+    dayHeaderTime.classList.toggle("is-selected-time", Boolean(String(day.headerEstimate || "").trim()));
+  }
+}
+
+function syncAllDayCardsFromState() {
+  const cards = ensureDayCardAccordionStructure();
+  cards.forEach((_, idx) => {
+    syncDayCardInputsFromState(idx);
+    renderRouteListIntoDayCard(idx);
+  });
 }
 
 function renumberDaySectionTitles() {
@@ -1284,7 +2310,8 @@ function renumberDaySectionTitles() {
   cards.forEach((card, idx) => {
     const title = card.querySelector(".section-head h2");
     if (title) {
-      title.textContent = `DAY${idx + 1}`;
+      const day = state.transportDays[idx];
+      title.textContent = `DAY${getDayDisplayNumber(day, idx)}`;
     }
   });
 }
@@ -1294,7 +2321,12 @@ function ensureDayCardAccordionStructure() {
   if (!daySections) return [];
   const cards = Array.from(daySections.querySelectorAll(":scope > .card"));
   cards.forEach((card, index) => {
+    const dayData = state.transportDays[index] || {};
     card.dataset.dayCardIndex = String(index);
+    card.dataset.dayOrderKey = String(
+      Number.isFinite(Number(dayData.orderKey)) ? Number(dayData.orderKey) : index,
+    );
+    card.classList.toggle("is-day-complete", Boolean(dayData.completed));
     const head = card.querySelector(":scope > .section-head");
     if (!head) return;
 
@@ -1310,6 +2342,35 @@ function ensureDayCardAccordionStructure() {
         head.prepend(dayTitle);
       }
     }
+
+    let dayTitleMain = dayTitle.querySelector(".day-title-main");
+    if (!dayTitleMain) {
+      dayTitleMain = document.createElement("div");
+      dayTitleMain.className = "day-title-main";
+      const title = dayTitle.querySelector("h2");
+      if (title) {
+        dayTitle.insertBefore(dayTitleMain, title);
+        dayTitleMain.appendChild(title);
+      } else {
+        dayTitle.prepend(dayTitleMain);
+      }
+    }
+
+    let dayCompleteCheck = dayTitleMain.querySelector(".day-complete-check");
+    if (!dayCompleteCheck) {
+      dayCompleteCheck = document.createElement("input");
+      dayCompleteCheck.type = "checkbox";
+      dayCompleteCheck.className = "day-complete-check";
+      dayCompleteCheck.setAttribute("aria-label", "DAY完了");
+      dayTitleMain.prepend(dayCompleteCheck);
+    }
+    dayCompleteCheck.dataset.dayComplete = String(index);
+    dayCompleteCheck.checked = Boolean(dayData.completed);
+    dayCompleteCheck.onchange = () => {
+      const card = dayCompleteCheck.closest(".card");
+      const idx = card ? Number(card.dataset.dayCardIndex) : NaN;
+      applyDayCompleteState(idx, dayCompleteCheck.checked);
+    };
 
     let tools = head.querySelector(".input-tools");
     if (!tools) {
@@ -1331,24 +2392,61 @@ function ensureDayCardAccordionStructure() {
     toggle.setAttribute("aria-label", "DAY開閉");
     toggle.setAttribute("title", "DAY開閉");
 
-    if (!tools.querySelector(".day-export-btn")) {
-      const exportBtn = document.createElement("button");
+    let exportBtn = tools.querySelector(".day-export-btn");
+    if (!exportBtn) {
+      exportBtn = document.createElement("button");
       exportBtn.type = "button";
-      exportBtn.className = "ghost tiny day-export-btn icon-btn";
-      exportBtn.textContent = "⇪";
-      exportBtn.setAttribute("aria-label", "書き出し");
-      exportBtn.setAttribute("title", "書き出し");
-      tools.appendChild(exportBtn);
     }
-    if (!tools.querySelector(".day-import-btn")) {
-      const importBtn = document.createElement("button");
+    exportBtn.className = "ghost tiny day-export-btn day-io-mini-btn";
+    exportBtn.innerHTML = '<span class="day-io-mini-icon" aria-hidden="true">→|</span>';
+    exportBtn.setAttribute("aria-label", "書き出し");
+    exportBtn.setAttribute("title", "書き出し");
+
+    let importBtn = tools.querySelector(".day-import-btn");
+    if (!importBtn) {
+      importBtn = document.createElement("button");
       importBtn.type = "button";
-      importBtn.className = "ghost tiny day-import-btn icon-btn";
-      importBtn.textContent = "⇩";
-      importBtn.setAttribute("aria-label", "読み込み");
-      importBtn.setAttribute("title", "読み込み");
-      tools.appendChild(importBtn);
     }
+    importBtn.className = "ghost tiny day-import-btn day-io-mini-btn";
+    importBtn.innerHTML = '<span class="day-io-mini-icon" aria-hidden="true">|←</span>';
+    importBtn.setAttribute("aria-label", "読み込み");
+    importBtn.setAttribute("title", "読み込み");
+
+    let moveUpBtn = tools.querySelector(".day-move-up-btn");
+    if (!moveUpBtn) {
+      moveUpBtn = document.createElement("button");
+      moveUpBtn.type = "button";
+    }
+    moveUpBtn.className = "ghost tiny day-move-up-btn icon-btn";
+    moveUpBtn.textContent = "↑";
+    moveUpBtn.setAttribute("aria-label", "DAYを上へ");
+    moveUpBtn.setAttribute("title", "DAYを上へ");
+
+    let moveDownBtn = tools.querySelector(".day-move-down-btn");
+    if (!moveDownBtn) {
+      moveDownBtn = document.createElement("button");
+      moveDownBtn.type = "button";
+    }
+    moveDownBtn.className = "ghost tiny day-move-down-btn icon-btn";
+    moveDownBtn.textContent = "↓";
+    moveDownBtn.setAttribute("aria-label", "DAYを下へ");
+    moveDownBtn.setAttribute("title", "DAYを下へ");
+
+    let clearBtn = tools.querySelector(".day-clear-btn");
+    if (!clearBtn) {
+      clearBtn = document.createElement("button");
+      clearBtn.type = "button";
+    }
+    clearBtn.className = "ghost tiny day-clear-btn icon-btn";
+    clearBtn.textContent = "C";
+    clearBtn.setAttribute("aria-label", "このDAYをクリア");
+    clearBtn.setAttribute("title", "このDAYをクリア");
+
+    const addBtn = tools.querySelector(".day-card-add");
+    const deleteBtn = tools.querySelector(".day-card-delete");
+    [addBtn, clearBtn, deleteBtn, moveUpBtn, moveDownBtn, exportBtn, importBtn]
+      .filter(Boolean)
+      .forEach((btn) => tools.appendChild(btn));
     if (!card.querySelector(".day-import-file")) {
       const importFile = document.createElement("input");
       importFile.type = "file";
@@ -1367,13 +2465,25 @@ function ensureDayCardAccordionStructure() {
     }
 
     const originInput = card.querySelector("#origin, input[list='origin-history']");
-    if (originInput) originInput.dataset.dayRole = "origin-input";
-    const destinationInput = card.querySelector("#destination-input, input[placeholder*='天城温泉']");
+    if (originInput) {
+      originInput.dataset.dayRole = "origin-input";
+      originInput.placeholder = (state.defaultOrigin || "").trim() || "出発地";
+    }
+    const destinationInput =
+      card.querySelector("#destination-input") ||
+      card.querySelector("input[data-day-role='destination-input']") ||
+      card.querySelector("input[placeholder='目的地']") ||
+      card.querySelector("input[placeholder*='GOAL']");
     if (destinationInput) destinationInput.dataset.dayRole = "destination-input";
-    const routeList = card.querySelector("#route-list, .box.muted");
+    const routeList = card.querySelector("#route-list, [data-day-role='route-list'], .route-list-plain, .box.muted");
     if (routeList) routeList.dataset.dayRole = "route-list";
     const detailBox = card.querySelector("#transport-detail, [data-day-role='transport-detail']");
     if (detailBox) detailBox.dataset.dayRole = "transport-detail";
+    const dayHeaderTime = card.querySelector("select[data-day-role='day-header-time-select']");
+    if (dayHeaderTime) {
+      dayHeaderTime.innerHTML = buildHeaderEstimateOptions(state.transportDays[index]?.headerEstimate || "");
+      dayHeaderTime.classList.toggle("is-selected-time", Boolean(String(state.transportDays[index]?.headerEstimate || "").trim()));
+    }
   });
   return cards;
 }
@@ -1384,9 +2494,63 @@ function setDayCardOpen(card, isOpen) {
   if (body) {
     body.classList.toggle("hidden", !isOpen);
   }
+  if (!isOpen) {
+    // DAYを閉じると、内部のSTART/GOALアコーディオンと経由地詳細も閉じる
+    card.querySelectorAll(".section-body").forEach((sectionBody) => {
+      sectionBody.classList.add("hidden");
+    });
+    card.querySelectorAll("button[data-section-toggle]").forEach((btn) => {
+      btn.textContent = "▶";
+      btn.classList.remove("is-open");
+      btn.setAttribute("aria-expanded", "false");
+    });
+
+    const dayIndex = Number(card.dataset.dayCardIndex);
+    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+      const day = state.transportDays[dayIndex];
+      if (day) {
+        const hasOriginNote = Boolean((day.originNote || "").trim());
+        day.originNoteExpanded = hasOriginNote ? Boolean(day.originNoteExpanded) : false;
+      }
+      if (day && Array.isArray(day.points)) {
+        day.points = day.points.map((point) => ({
+          ...(() => {
+            const normalized = ensurePointObject(point);
+            const hasPointNote = Boolean((normalized.note || "").trim());
+            return {
+              ...normalized,
+              noteExpanded: hasPointNote ? Boolean(normalized.noteExpanded) : false,
+            };
+          })(),
+          expanded: false,
+          candidates: [],
+        }));
+      }
+    }
+
+    // 描画済みDOM上の経由地詳細も確実に閉じる
+    card.querySelectorAll(".route-waypoint-body").forEach((waypointBody) => {
+      waypointBody.classList.add("hidden");
+    });
+    card.querySelectorAll("button[data-toggle-point]").forEach((btn) => {
+      btn.textContent = "▶";
+    });
+
+    if (els.historyEditorModal && card.contains(els.historyEditorModal)) {
+      closeHistoryEditor();
+    }
+    const originInlineEditor = card.querySelector("#origin-inline-editor");
+    if (originInlineEditor && !originInlineEditor.classList.contains("hidden")) {
+      setOriginInlineEditorOpen(false);
+    }
+  }
   if (toggle) {
     toggle.textContent = isOpen ? "▼" : "▶";
     toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  }
+  const dayIndex = Number(card.dataset.dayCardIndex);
+  if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+    syncDayCardInputsFromState(dayIndex);
   }
 }
 
@@ -1398,8 +2562,10 @@ function isDayCardOpen(card) {
 function setupDayAccordionDefaults() {
   const cards = ensureDayCardAccordionStructure();
   if (!cards.length) return;
+  const openIndex = 0;
+  state.activeDayIndex = openIndex;
   cards.forEach((card, idx) => {
-    setDayCardOpen(card, idx === 0);
+    setDayCardOpen(card, idx === openIndex);
   });
 }
 
@@ -1543,7 +2709,32 @@ function addDaySectionFromCard(sourceCard) {
   daySections.insertBefore(clonedCard, sourceCard.nextSibling);
   renumberDaySectionTitles();
   setDayCardOpen(clonedCard, false);
+  refreshAllDayHistoryDropdownCaches();
   return newDayIndex;
+}
+
+function ensureDayCardsMatchStateDays() {
+  const daySections = document.getElementById("day-sections");
+  if (!daySections) return;
+  if (!Array.isArray(state.transportDays) || !state.transportDays.length) {
+    state.transportDays = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, headerEstimate: "", segmentTimes: {}, completed: false, orderKey: 0 }];
+  }
+
+  let cards = Array.from(daySections.querySelectorAll(":scope > .card"));
+  if (!cards.length) return;
+
+  while (cards.length < state.transportDays.length) {
+    const source = cards[0];
+    const clonedCard = source.cloneNode(true);
+    removeIdsFromCard(clonedCard);
+    daySections.appendChild(clonedCard);
+    cards = Array.from(daySections.querySelectorAll(":scope > .card"));
+  }
+
+  while (cards.length > state.transportDays.length && cards.length > 1) {
+    cards[cards.length - 1].remove();
+    cards = Array.from(daySections.querySelectorAll(":scope > .card"));
+  }
 }
 
 function removeDaySectionByButton(button) {
@@ -1573,6 +2764,82 @@ function removeDaySectionByButton(button) {
   renderRouteList();
   renderTransportDetail();
   setStatus("DAYを削除しました。");
+}
+
+function moveDaySectionByButton(button, delta) {
+  const daySections = document.getElementById("day-sections");
+  if (!daySections) return;
+  const cards = Array.from(daySections.querySelectorAll(":scope > .card"));
+  if (cards.length <= 1) return;
+  const targetCard = button.closest(".card");
+  if (!targetCard) return;
+  const fromIndexRaw = Number(targetCard.dataset.dayCardIndex);
+  const fromIndex =
+    Number.isInteger(fromIndexRaw) && fromIndexRaw >= 0 && fromIndexRaw < state.transportDays.length
+      ? fromIndexRaw
+      : state.activeDayIndex;
+  const toIndex = fromIndex + delta;
+  if (!Number.isInteger(toIndex) || toIndex < 0 || toIndex >= state.transportDays.length) {
+    setStatus("これ以上移動できません。", true);
+    return;
+  }
+
+  const [movedDay] = state.transportDays.splice(fromIndex, 1);
+  state.transportDays.splice(toIndex, 0, movedDay);
+
+  const currentCards = Array.from(daySections.querySelectorAll(":scope > .card"));
+  const movingCard = currentCards[fromIndex];
+  const anchorCard = currentCards[toIndex];
+  if (movingCard && anchorCard) {
+    if (delta < 0) {
+      daySections.insertBefore(movingCard, anchorCard);
+    } else {
+      daySections.insertBefore(movingCard, anchorCard.nextSibling);
+    }
+  }
+
+  renumberDaySectionTitles();
+  refreshAllDayHistoryDropdownCaches();
+  syncAllDayCardsFromState();
+  setActiveDay(toIndex);
+  renderRouteList();
+  renderTransportDetail();
+  setStatus(delta < 0 ? "DAYを上へ移動しました。" : "DAYを下へ移動しました。");
+}
+
+function clearDaySectionByButton(button) {
+  const targetCard = button.closest(".card");
+  if (!targetCard) return;
+  const dayIndexRaw = Number(targetCard.dataset.dayCardIndex);
+  const dayIndex =
+    Number.isInteger(dayIndexRaw) && dayIndexRaw >= 0 && dayIndexRaw < state.transportDays.length
+      ? dayIndexRaw
+      : state.activeDayIndex;
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+
+  const day = state.transportDays[dayIndex];
+  if (!day) return;
+
+  // Cボタンでも戻る操作で復元できるよう、クリア前をUndoへ保存
+  pushUndoCheckpoint(captureTransportUndoSnapshot());
+
+  day.origin = "";
+  day.originNote = "";
+  day.originNoteExpanded = false;
+  day.points = [];
+  day.headerEstimate = "";
+  day.segmentTimes = {};
+  day.completed = false;
+
+  normalizePlanPoints(day);
+  syncDayCardInputsFromState(dayIndex);
+  renderRouteListIntoDayCard(dayIndex);
+  if (dayIndex === state.activeDayIndex) {
+    renderRouteList();
+    renderTransportDetail();
+  }
+  saveTransportState();
+  setStatus(`DAY${getDayDisplayNumber(state.transportDays[dayIndex], dayIndex)}をクリアしました。`);
 }
 
 async function exportSingleDay(card) {
@@ -1642,9 +2909,14 @@ function createAllDaysPayload() {
 function addRouteDay(afterDayIndex = null) {
   const newDay = {
     origin: "",
+    originNote: "",
+    originNoteExpanded: false,
     points: [],
     expanded: false,
+    headerEstimate: "",
     segmentTimes: {},
+    completed: false,
+    orderKey: getNextDayOrderKey(),
   };
   let insertedIndex = state.transportDays.length;
   if (Number.isInteger(afterDayIndex) && afterDayIndex >= 0 && afterDayIndex < state.transportDays.length) {
@@ -1670,8 +2942,20 @@ function deleteRouteDay(dayIndex) {
 function normalizeAllDays() {
   state.transportDays.forEach((day, idx) => {
     normalizePlanPoints(day);
+    if (typeof day.originNote !== "string") {
+      day.originNote = "";
+    }
+    if (typeof day.originNoteExpanded !== "boolean") {
+      day.originNoteExpanded = false;
+    }
     if (typeof day.expanded !== "boolean") {
       day.expanded = idx === 0;
+    }
+    if (typeof day.completed !== "boolean") {
+      day.completed = false;
+    }
+    if (!Number.isFinite(Number(day.orderKey))) {
+      day.orderKey = idx;
     }
     if (!day.segmentTimes || typeof day.segmentTimes !== "object" || Array.isArray(day.segmentTimes)) {
       day.segmentTimes = {};
@@ -1679,11 +2963,74 @@ function normalizeAllDays() {
   });
 }
 
+function sortDaysByCompletionAndOrder() {
+  const daySections = document.getElementById("day-sections");
+  if (!daySections || !Array.isArray(state.transportDays) || !state.transportDays.length) return;
+
+  const cards = ensureDayCardAccordionStructure();
+  const cardByOrderKey = new Map();
+  cards.forEach((card, idx) => {
+    const orderKey = Number.isFinite(Number(state.transportDays[idx]?.orderKey))
+      ? Number(state.transportDays[idx].orderKey)
+      : idx;
+    cardByOrderKey.set(String(orderKey), card);
+  });
+
+  const activeOrderKey = Number.isFinite(Number(state.transportDays[state.activeDayIndex]?.orderKey))
+    ? Number(state.transportDays[state.activeDayIndex].orderKey)
+    : null;
+
+  state.transportDays.sort((a, b) => {
+    if (Boolean(a.completed) !== Boolean(b.completed)) {
+      return a.completed ? 1 : -1;
+    }
+    return Number(a.orderKey) - Number(b.orderKey);
+  });
+
+  state.transportDays.forEach((day) => {
+    const card = cardByOrderKey.get(String(day.orderKey));
+    if (card) daySections.appendChild(card);
+  });
+
+  let nextActiveIndex = state.transportDays.findIndex((day) => Number(day.orderKey) === activeOrderKey);
+  if (nextActiveIndex < 0) nextActiveIndex = 0;
+  if (state.transportDays[nextActiveIndex]?.completed) {
+    const firstIncomplete = state.transportDays.findIndex((day) => !day.completed);
+    if (firstIncomplete >= 0) {
+      nextActiveIndex = firstIncomplete;
+    }
+  }
+  state.activeDayIndex = nextActiveIndex;
+
+  const refreshed = ensureDayCardAccordionStructure();
+  refreshed.forEach((card, idx) => {
+    setDayCardOpen(card, idx === state.activeDayIndex);
+  });
+  renumberDaySectionTitles();
+  refreshAllDayHistoryDropdownCaches();
+  saveTransportState();
+}
+
+function applyDayCompleteState(dayIndex, isChecked) {
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+  const nextChecked = Boolean(isChecked);
+  if (Boolean(state.transportDays[dayIndex].completed) === nextChecked) return;
+  state.transportDays[dayIndex].completed = nextChecked;
+  if (nextChecked) {
+    state.transportDays[dayIndex].expanded = false;
+  }
+  sortDaysByCompletionAndOrder();
+  setStatus(nextChecked ? "DAYを完了にしました。" : "DAYの完了を解除しました。");
+}
+
 function buildRouteListHtmlForDay(dayIndex) {
   const day = state.transportDays[dayIndex];
   if (!day) return "<li class='route-origin'>経由地または目的地を追加してください。</li>";
   const points = day.points.map(ensurePointObject);
-  const destinationPoint = points.find((point) => point.isDestination) || points[points.length - 1];
+  const destinationPoint =
+    points.find((point) => point.isDestination) ||
+    points[points.length - 1] ||
+    { name: "", url: "", candidates: [], isDestination: true, expanded: false, checked: false };
   const destinationIndex = destinationPoint ? points.findIndex((point) => point === destinationPoint) : -1;
   const waypoints = points
     .map((point, sourceIndex) => ({ point, sourceIndex }))
@@ -1691,44 +3038,50 @@ function buildRouteListHtmlForDay(dayIndex) {
   const rowHtmlList = waypoints.map(({ point, sourceIndex }) => {
     const moveDayOptions =
       state.transportDays.length > 1
-        ? state.transportDays.map((_, idx) => `<option value="${idx}" ${idx === dayIndex ? "selected" : ""}>DAY${idx + 1}</option>`).join("")
-        : `<option value="${dayIndex}" selected>DAY${dayIndex + 1}</option>`;
+        ? state.transportDays
+            .map((item, idx) => `<option value="${idx}" ${idx === dayIndex ? "selected" : ""}>DAY${getDayDisplayNumber(item, idx)}</option>`)
+            .join("")
+        : `<option value="${dayIndex}" selected>DAY${getDayDisplayNumber(state.transportDays[dayIndex], dayIndex)}</option>`;
     const key = `${dayIndex}:${sourceIndex}`;
     const isEmptyWaypoint = !(point.name || "").trim();
     return `
       <li class="route-item route-waypoint-item ${isEmptyWaypoint ? "is-empty-waypoint" : ""}" draggable="true" data-day-index="${dayIndex}" data-index="${sourceIndex}">
         <div class="route-waypoint-head">
-          <button type="button" class="ghost tiny route-toggle-btn" data-toggle-point="${key}" aria-label="経由地開閉">${point.expanded ? "▼" : "▶"}</button>
-          <input type="text" class="route-point-input" data-point-input="${dayIndex}:${sourceIndex}" value="${point.name}" placeholder="経由地を入力" />
-          <button type="button" class="tiny route-btn-black" data-remove-point="${dayIndex}:${sourceIndex}">削除</button>
-          <button type="button" class="ghost tiny route-head-icon" data-move-up="${dayIndex}:${sourceIndex}">↑</button>
-          <button type="button" class="ghost tiny route-head-icon" data-move-down="${dayIndex}:${sourceIndex}">↓</button>
           <span class="drag-handle">⠿</span>
+          <button type="button" class="ghost tiny route-toggle-btn" data-toggle-point="${key}" aria-label="経由地開閉" aria-expanded="${point.expanded ? "true" : "false"}">${point.expanded ? "▼" : "▶"}</button>
+          <input type="checkbox" class="route-point-check" data-point-check="${dayIndex}:${sourceIndex}" ${point.checked ? "checked" : ""} aria-label="経由地チェック" />
+          <input type="text" class="route-point-input ${point.checked ? "is-waypoint-checked" : ""}" data-point-input="${dayIndex}:${sourceIndex}" value="${point.name}" placeholder="経由地を入力" />
+          <button type="button" class="tiny route-btn-black" data-remove-point="${dayIndex}:${sourceIndex}" aria-label="削除">×</button>
         </div>
         <div class="route-waypoint-body ${point.expanded ? "" : "hidden"}">
           <div class="route-history-tools route-waypoint-history-tools">
-            <button type="button" class="ghost tiny" data-open-history="${key}">履歴から</button>
-            <button type="button" class="ghost tiny" data-edit-history="${key}">☰</button>
-            <input type="url" class="route-url-input" data-point-url="${dayIndex}:${sourceIndex}" value="${point.url || ""}" placeholder="参考 URL" />
+            <button type="button" class="ghost tiny ${state.activeHistoryDropdownIndex === key ? "history-toggle-active" : ""}" data-open-history="${key}">${state.activeHistoryDropdownIndex === key ? "閉じる" : "履歴"}</button>
+            <button type="button" class="tiny origin-edit-btn ${isInlinePlaceEditorOpen(`waypoint:${key}`) ? "origin-edit-active" : ""}" data-edit-history="${key}">${isInlinePlaceEditorOpen(`waypoint:${key}`) ? "✕" : "☰"}</button>
+            <button type="button" class="tiny route-btn-black" data-url-suggest="${dayIndex}:${sourceIndex}">MAP</button>
+            <button type="button" class="ghost tiny ${point.noteExpanded ? "note-toggle-active" : ""}" data-toggle-point-note="${dayIndex}:${sourceIndex}">${point.noteExpanded ? "備考閉" : "備考"}</button>
+          </div>
+          <div class="route-waypoint-note ${point.noteExpanded ? "" : "hidden"}">
+            <div class="note-tools">
+              <button type="button" class="ghost tiny" data-note-format="checkbox">チェックボックス</button>
+              <button type="button" class="ghost tiny" data-note-format="list">リスト</button>
+              <button type="button" class="ghost tiny" data-note-clear>クリア</button>
+            </div>
+            <textarea class="route-url-input" data-point-note="${dayIndex}:${sourceIndex}" rows="2" placeholder="経由地備考">${escapeHtml(point.note || "")}</textarea>
           </div>
           <div class="route-history-dropdown ${state.activeHistoryDropdownIndex === key ? "" : "hidden"}">
             ${
-              state.placeHistory.length
-                ? state.placeHistory
+              getPlaceHistoryWithStart().length
+                ? getPlaceHistoryWithStart()
                     .slice(0, 12)
                     .map((historyName) => `<button type="button" class="ghost tiny" data-use-history="${key}" data-history-name="${encodeURIComponent(historyName)}">${historyName}</button>`)
                     .join("")
                 : "<span class='muted'>履歴がありません</span>"
             }
           </div>
-          <div class="route-actions route-waypoint-actions">
-            <button type="button" class="tiny route-btn-black" data-google-suggest="${dayIndex}:${sourceIndex}">名称候補検索</button>
-            <button type="button" class="tiny route-btn-black" data-close-candidates="${dayIndex}:${sourceIndex}">候補を閉じる</button>
+          <div class="route-actions route-waypoint-search-row">
+            <button type="button" class="tiny ${point.candidates.length ? "route-btn-green-active" : "route-btn-green"}" data-google-suggest="${dayIndex}:${sourceIndex}">${point.candidates.length ? "閉じる" : "名称候補"}</button>
             <button type="button" class="tiny route-btn-black" data-google-search="${dayIndex}:${sourceIndex}">Google検索</button>
-          </div>
-          <div class="route-actions route-waypoint-move-row">
-            <select class="tiny" data-move-day-select="${dayIndex}:${sourceIndex}">${moveDayOptions}</select>
-            <button type="button" class="tiny route-btn-black" data-move-to-day="${dayIndex}:${sourceIndex}">別日に移動</button>
+            <input type="url" class="route-url-input" data-point-url="${dayIndex}:${sourceIndex}" value="${point.url || ""}" placeholder="参考 URL" />
           </div>
           <div class="route-candidates">
             ${
@@ -1738,6 +3091,12 @@ function buildRouteListHtmlForDay(dayIndex) {
                     .join("")
                 : ""
             }
+          </div>
+          <div class="route-actions route-waypoint-move-row">
+            <select class="tiny" data-move-day-select="${dayIndex}:${sourceIndex}">${moveDayOptions}</select>
+            <button type="button" class="tiny route-btn-black" data-move-to-day="${dayIndex}:${sourceIndex}">別日に移動</button>
+            <button type="button" class="ghost tiny route-head-icon" data-move-up="${dayIndex}:${sourceIndex}">↑</button>
+            <button type="button" class="ghost tiny route-head-icon" data-move-down="${dayIndex}:${sourceIndex}">↓</button>
           </div>
         </div>
       </li>
@@ -1757,16 +3116,15 @@ function buildRouteListHtmlForDay(dayIndex) {
       <li class="route-segment-only">
         ${
           canOpen
-            ? `<button type="button" class="ghost tiny" data-open-segment-from="${encodeURIComponent(from)}" data-open-segment-to="${encodeURIComponent(to)}">GoogleMap</button>
-               <button type="button" class="ghost tiny" data-open-segment-yahoo-from="${encodeURIComponent(from)}" data-open-segment-yahoo-to="${encodeURIComponent(to)}">Yahooカーナビ</button>`
-            : `<button type="button" class="ghost tiny" data-open-segment-disabled data-segment-reason="${reason}">GoogleMap</button>
-               <button type="button" class="ghost tiny" data-open-segment-yahoo-disabled data-segment-reason="${reason}">Yahooカーナビ</button>`
+            ? `<button type="button" class="ghost tiny" data-open-segment-from="${encodeURIComponent(from)}" data-open-segment-to="${encodeURIComponent(to)}">G Map</button>
+               <button type="button" class="ghost tiny" data-open-segment-yahoo-from="${encodeURIComponent(from)}" data-open-segment-yahoo-to="${encodeURIComponent(to)}">Y Nav</button>`
+            : `<button type="button" class="ghost tiny route-segment-disabled-btn" data-open-segment-disabled data-segment-reason="${reason}" disabled>G Map</button>
+               <button type="button" class="ghost tiny route-segment-disabled-btn" data-open-segment-yahoo-disabled data-segment-reason="${reason}" disabled>Y Nav</button>`
         }
-        <span class="route-segment-time">${getDriveTimeLabel(from, to)}</span>
-        <select class="tiny route-segment-time-select" data-segment-time-select="${dayIndex}:${segmentVisualIndex}">
+        <select class="tiny route-segment-time-select ${manualTimeValue ? "is-selected-time" : ""} ${canOpen ? "" : "route-segment-time-disabled"}" data-segment-time-select="${dayIndex}:${segmentVisualIndex}" ${canOpen ? "" : "disabled"}>
           ${optionsHtml}
         </select>
-        <button type="button" class="ghost tiny" data-add-waypoint-at="${dayIndex}:${insertAtIndex}">経由地を追加</button>
+        <button type="button" class="ghost tiny route-segment-add-btn" data-add-waypoint-at="${dayIndex}:${insertAtIndex}">追加</button>
       </li>
     `;
     segmentVisualIndex += 1;
@@ -1776,8 +3134,8 @@ function buildRouteListHtmlForDay(dayIndex) {
   let fromName = (day.origin || "").trim();
   waypoints.forEach(({ point, sourceIndex }, idx) => {
     const waypointName = (point.name || "").trim();
+    routeItemsHtml += renderSegmentRow(fromName, waypointName, sourceIndex);
     if (waypointName) {
-      routeItemsHtml += renderSegmentRow(fromName, waypointName, sourceIndex);
       fromName = waypointName;
     }
     routeItemsHtml += rowHtmlList[idx] || "";
@@ -1792,18 +3150,20 @@ function buildRouteListHtmlForDay(dayIndex) {
 }
 
 function renderRouteList() {
+  normalizeAllDays();
   if (!state.transportDays.length) {
-    els.routeList.textContent = "DAYを追加してください。";
-    els.routeList.classList.add("muted");
+    const cards = ensureDayCardAccordionStructure();
+    const firstCard = cards[0];
+    const target = firstCard ? firstCard.querySelector("[data-day-role='route-list']") : els.routeList;
+    if (target) {
+      target.textContent = "DAYを追加してください。";
+      target.classList.add("muted");
+    }
     saveTransportState();
     return;
   }
-  normalizeAllDays();
-  const dayIndex = state.activeDayIndex;
-  const routeItemsHtml = buildRouteListHtmlForDay(dayIndex);
-  els.routeList.classList.remove("muted");
-  els.routeList.innerHTML = `<ul class="route-items" data-day-dropzone="${dayIndex}">${routeItemsHtml}</ul>`;
-  setActiveDay(state.activeDayIndex);
+  renderRouteListIntoDayCard(state.activeDayIndex);
+  syncPlaceInlineEditorButtons();
   saveTransportState();
 }
 
@@ -1816,6 +3176,7 @@ function renderRouteListIntoDayCard(dayIndex) {
   const routeItemsHtml = buildRouteListHtmlForDay(dayIndex);
   target.classList.remove("muted");
   target.innerHTML = `<ul class="route-items" data-day-dropzone="${dayIndex}">${routeItemsHtml}</ul>`;
+  autoResizeNoteTextareasIn(target);
 }
 
 function renderTransportDetail() {
@@ -1833,7 +3194,7 @@ function renderTransportDetail() {
     ${transport.origin} → ${transport.destination}<br />
     経由地: ${transport.waypoints.length ? transport.waypoints.join(" / ") : "なし"}<br />
     <button type="button" class="ghost tiny" data-open-full-route>GoogleMapで全体ルートを表示</button>
-    <button type="button" class="ghost tiny" data-open-full-route-yahoo>Yahooカーナビで全体ルートを表示</button>
+    <button type="button" class="ghost tiny" data-open-full-route-yahoo>Yahooナビで全体ルートを表示</button>
   `;
 }
 
@@ -1883,38 +3244,92 @@ function renderHistory() {
 }
 
 function handleHotelRegisterSubmit(formEl) {
-  if (!formEl) return;
-  const urlInput =
-    formEl.querySelector("input[data-day-role='hotel-url-input']") ||
-    formEl.querySelector("#hotelUrl");
-  if (!urlInput) return;
+  if (!formEl) return false;
+  try {
+    const card = formEl.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
 
-  const hotelUrl = urlInput.value.trim();
-  const historyEntry = state.hotelUrlHistory.find((entry) => entry.url === hotelUrl);
-  const item = buildHotelFromUrl(hotelUrl, historyEntry?.name || "");
+    const urlInput =
+      formEl.querySelector("input[data-day-role='hotel-url-input']") ||
+      formEl.querySelector("#hotelUrl");
+    if (!urlInput) return false;
 
-  if (!item) {
+    const hotelUrlRaw = urlInput.value.trim();
+    const hotelUrl = normalizeUrlValue(hotelUrlRaw);
+    if (hotelUrl && hotelUrl !== hotelUrlRaw) {
+      urlInput.value = hotelUrl;
+    }
+    const historyEntry = state.hotelUrlHistory.find((entry) => normalizeUrlValue(entry.url) === hotelUrl);
+    const existing = state.hotels.find((hotel) => normalizeUrlValue(hotel.url) === hotelUrl);
+    const item = buildHotelFromUrl(hotelUrl, historyEntry?.name || existing?.name || "");
+
+    if (!item) {
+      setStatus("有効な宿URLを入力してください。", true);
+      return false;
+    }
+
+    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+      setActiveDay(dayIndex);
+    }
+
+    let targetHotel = item;
+    if (existing) {
+      const merged = { ...existing, ...item, id: existing.id };
+      state.hotels = state.hotels.map((hotel) => (hotel.id === existing.id ? merged : hotel));
+      targetHotel = merged;
+    } else {
+      state.hotels.push(item);
+    }
+
+    state.selectedHotel = targetHotel;
+    try {
+      syncDestinationWithHotel(targetHotel);
+    } catch (err) {
+      console.error("syncDestinationWithHotel failed:", err);
+    }
+
+    renderHotelResults();
+    renderSelectedHotel();
+    saveHotelUrlHistory(hotelUrl, targetHotel.name);
+    savePlaceHistory(targetHotel.name);
+    closeTopHistoryDropdowns();
+    closeAllDayHistoryDropdowns();
+    formEl.reset();
+
+    const note = targetHotel.priceEstimated ? "料金はURLから取得できなかったため推定値です。" : "";
+    const msg = existing
+      ? `既存の「${targetHotel.name} (${targetHotel.site})」を目的地に設定しました。`
+      : `「${targetHotel.name} (${targetHotel.site})」をURLから自動登録しました。`;
+    setStatus(`${msg}${note}`.trim());
+    return true;
+  } catch (err) {
+    console.error("handleHotelRegisterSubmit failed:", err);
+    setStatus("宿泊地の登録に失敗しました。URLを確認して再試行してください。", true);
+    return false;
+  }
+}
+
+function applyHotelUrlHistorySelection(urlValue, card = null) {
+  const normalizedUrl = normalizeUrlValue(urlValue);
+  if (!normalizedUrl) {
     setStatus("有効な宿URLを入力してください。", true);
     return false;
   }
 
-  state.hotels.push(item);
-  if (!state.selectedHotel) {
-    state.selectedHotel = item;
-    syncDestinationWithHotel(item);
+  const targetCard = card || ensureDayCardAccordionStructure()[state.activeDayIndex] || null;
+  const scopedInput = targetCard ? targetCard.querySelector("input[data-day-role='hotel-url-input']") : null;
+  const input = scopedInput || els.hotelUrlInput;
+  if (!input) return false;
+  input.value = normalizedUrl;
+
+  const dayIndex = Number(targetCard?.dataset.dayCardIndex);
+  if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+    setActiveDay(dayIndex);
   }
 
-  renderHotelResults();
-  renderSelectedHotel();
-  saveHotelUrlHistory(hotelUrl, item.name);
-  savePlaceHistory(item.name);
-  closeTopHistoryDropdowns();
-  closeAllDayHistoryDropdowns();
-  formEl.reset();
-
-  const note = item.priceEstimated ? "料金はURLから取得できなかったため推定値です。" : "";
-  setStatus(`「${item.name} (${item.site})」をURLから自動登録しました。${note}`.trim());
-  return true;
+  const form = input.closest("form") || els.hotelForm;
+  if (!form) return false;
+  return handleHotelRegisterSubmit(form);
 }
 
 if (els.hotelForm) {
@@ -1933,36 +3348,56 @@ document.addEventListener("submit", (e) => {
   handleHotelRegisterSubmit(form);
 });
 
+document.addEventListener("click", (e) => {
+  const submitBtn = e.target.closest("form .goal-register-btn[type='submit']");
+  if (!submitBtn) return;
+  const form = submitBtn.closest("form");
+  if (!form) return;
+  const hasHotelUrlField = form.querySelector("input[data-day-role='hotel-url-input']");
+  if (!hasHotelUrlField) return;
+  e.preventDefault();
+  handleHotelRegisterSubmit(form);
+});
+
 els.hotelSort.addEventListener("change", renderHotelResults);
 
-els.hotelResults.addEventListener("click", (e) => {
+function handleHotelResultsClick(e, nonPrimaryOnly = false) {
+  const host = e.target.closest("[data-day-role='hotel-results']");
+  if (!host) return false;
+  if (nonPrimaryOnly && host.id === "hotel-results") return false;
+  const card = host.closest(".card");
+  const dayIndex = Number(card?.dataset.dayCardIndex);
+  if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+    setActiveDay(dayIndex);
+  }
+
   const toggleBtn = e.target.closest("button[data-toggle-hotel-panel]");
   if (toggleBtn) {
     const hotelId = toggleBtn.dataset.toggleHotelPanel;
-    if (!hotelId) return;
+    if (!hotelId) return true;
     state.hotelExpanded[hotelId] = !state.hotelExpanded[hotelId];
     renderHotelResults();
-    return;
+    return true;
   }
 
   const setBtn = e.target.closest("button[data-set-hotel-destination]");
   if (setBtn) {
     const hotelId = setBtn.dataset.setHotelDestination;
     const selected = state.hotels.find((h) => h.id === hotelId);
-    if (!selected) return;
+    if (!selected) return true;
     state.selectedHotel = selected;
     syncDestinationWithHotel(selected);
     renderHotelResults();
     renderSelectedHotel();
     setStatus(`目的地を「${selected.name}」に設定しました。`);
-    return;
+    return true;
   }
 
   const deleteBtn = e.target.closest("button[data-delete-hotel]");
-  if (!deleteBtn) return;
+  if (!deleteBtn) return false;
   const hotelId = deleteBtn.dataset.deleteHotel;
   const target = state.hotels.find((h) => h.id === hotelId);
-  if (!target) return;
+  if (!target) return true;
 
   state.hotels = state.hotels.filter((h) => h.id !== hotelId);
   delete state.hotelExpanded[hotelId];
@@ -1973,6 +3408,17 @@ els.hotelResults.addEventListener("click", (e) => {
   renderHotelResults();
   renderSelectedHotel();
   setStatus(`「${target.name}」を削除しました。`);
+  return true;
+}
+
+els.hotelResults.addEventListener("click", (e) => {
+  if (handleHotelResultsClick(e)) {
+    return;
+  }
+});
+
+document.addEventListener("click", (e) => {
+  handleHotelResultsClick(e, true);
 });
 
 if (els.selectedHotel) {
@@ -1995,67 +3441,46 @@ els.hotelResults.addEventListener("click", (e) => {
       return;
     }
     const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
-    window.open(searchUrl, "_blank", "noopener,noreferrer");
+    openExternalUrl(searchUrl);
     return;
   }
 
-  const searchBtn = e.target.closest("button[data-search-hotel-name]");
-  if (searchBtn) {
-    const hotelId = searchBtn.dataset.searchHotelName;
-    const hotel = state.hotels.find((item) => item.id === hotelId);
-    const name = (hotel?.name || "").trim();
-    if (!name) {
-      setStatus("Google検索候補を取るには、先に宿名を入力してください。", true);
-      return;
+  const applyGoalCandidateBtn = e.target.closest("button[data-apply-destination-name-candidate]");
+  if (applyGoalCandidateBtn) {
+    const name = decodeURIComponent(applyGoalCandidateBtn.dataset.applyDestinationNameCandidate || "");
+    if (!name) return;
+    if (els.destinationInput) {
+      els.destinationInput.value = name;
     }
-    setStatus("Google検索候補を取得中です...");
-    fetchGoogleSuggestions(name)
-      .then((candidates) => {
-        state.hotels = state.hotels.map((item) =>
-          item.id === hotelId ? { ...item, candidates: Array.isArray(candidates) ? candidates : [] } : item,
-        );
-        renderHotelResults();
-        setStatus(
-          candidates.length
-            ? "Google検索候補を取得しました。候補を押すと宿名を置換できます。"
-            : "Google検索候補が見つかりませんでした。",
-          !candidates.length,
-        );
-      })
-      .catch(() => {
-        setStatus("Google検索候補の取得に失敗しました。時間を置いて再試行してください。", true);
-      });
+    syncDestinationFromInput(name);
+    state.destinationNameCandidates = [];
+    renderDestinationNameCandidates();
+    setStatus(`GOALを「${name}」に設定しました。`);
     return;
-  }
-
-  const closeBtn = e.target.closest("button[data-close-hotel-candidates]");
-  if (closeBtn) {
-    const hotelId = closeBtn.dataset.closeHotelCandidates;
-    state.hotels = state.hotels.map((item) => (item.id === hotelId ? { ...item, candidates: [] } : item));
-    renderHotelResults();
-    setStatus("Google検索候補を閉じました。");
-    return;
-  }
-
-  const applyBtn = e.target.closest("button[data-apply-hotel-candidate]");
-  if (applyBtn) {
-    const hotelId = applyBtn.dataset.applyHotelCandidate;
-    const candidate = decodeURIComponent(applyBtn.dataset.candidateName || "");
-    if (!candidate) return;
-    updateHotelNameById(hotelId, candidate, { silent: true });
-    state.hotels = state.hotels.map((item) =>
-      item.id === hotelId ? { ...item, name: candidate, candidates: [] } : item,
-    );
-    renderHotelResults();
-    renderSelectedHotel();
-    setStatus(`候補名「${candidate}」で宿名を置き換えました。`);
   }
 });
 
-els.hotelResults.addEventListener("change", (e) => {
+function handleHotelResultsNameChange(e, nonPrimaryOnly = false) {
+  const host = e.target.closest("[data-day-role='hotel-results']");
+  if (!host) return false;
+  if (nonPrimaryOnly && host.id === "hotel-results") return false;
   const input = e.target.closest("input[data-hotel-name-input]");
-  if (!input) return;
+  if (!input) return false;
+  const card = host.closest(".card");
+  const dayIndex = Number(card?.dataset.dayCardIndex);
+  if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+    setActiveDay(dayIndex);
+  }
   updateHotelNameById(input.dataset.hotelNameInput, input.value);
+  return true;
+}
+
+els.hotelResults.addEventListener("change", (e) => {
+  handleHotelResultsNameChange(e);
+});
+
+document.addEventListener("change", (e) => {
+  handleHotelResultsNameChange(e, true);
 });
 
 function handleAddRoutePoint(targetDayIndex = state.activeDayIndex, insertAtIndex = null) {
@@ -2089,32 +3514,146 @@ function parseDayAndIndex(value) {
   return { dayIndex, pointIndex };
 }
 
+function addPrefixToNoteLines(textarea, prefix) {
+  if (!textarea) return;
+  const text = String(textarea.value || "");
+  let start = Number.isInteger(textarea.selectionStart) ? textarea.selectionStart : 0;
+  let end = Number.isInteger(textarea.selectionEnd) ? textarea.selectionEnd : start;
+  if (start > end) [start, end] = [end, start];
+
+  const lineStart = text.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+  const lineEnd = (() => {
+    const idx = text.indexOf("\n", end);
+    return idx === -1 ? text.length : idx;
+  })();
+
+  const target = text.slice(lineStart, lineEnd);
+  const lines = target.split("\n");
+  const replaced = lines.map((line) => `${prefix}${line}`).join("\n");
+  const nextText = text.slice(0, lineStart) + replaced + text.slice(lineEnd);
+  textarea.value = nextText;
+
+  if (start === end) {
+    const nextPos = start + prefix.length;
+    textarea.setSelectionRange(nextPos, nextPos);
+  } else {
+    const beforeStart = text.slice(lineStart, start);
+    const beforeEnd = text.slice(lineStart, end);
+    const startLineCount = beforeStart.split("\n").length;
+    const endLineCount = beforeEnd.split("\n").length;
+    const nextStart = start + startLineCount * prefix.length;
+    const nextEnd = end + endLineCount * prefix.length;
+    textarea.setSelectionRange(nextStart, nextEnd);
+  }
+
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  textarea.focus({ preventScroll: true });
+}
+
+function toggleNoteCheckboxAtCursor(textarea) {
+  if (!textarea) return false;
+  const text = String(textarea.value || "");
+  const pos = Number.isInteger(textarea.selectionStart) ? textarea.selectionStart : 0;
+  const lineStart = text.lastIndexOf("\n", Math.max(0, pos - 1)) + 1;
+  const lineEndIdx = text.indexOf("\n", pos);
+  const lineEnd = lineEndIdx === -1 ? text.length : lineEndIdx;
+  const line = text.slice(lineStart, lineEnd);
+  const col = Math.max(0, pos - lineStart);
+  if (col > 2) return false;
+
+  let replaced = "";
+  if (line.startsWith("☐ ")) {
+    replaced = `☑ ${line.slice(2)}`;
+  } else if (line.startsWith("☑ ")) {
+    replaced = `☐ ${line.slice(2)}`;
+  } else {
+    return false;
+  }
+
+  const nextText = text.slice(0, lineStart) + replaced + text.slice(lineEnd);
+  textarea.value = nextText;
+  const nextPos = lineStart + Math.min(col, replaced.length);
+  textarea.setSelectionRange(nextPos, nextPos);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}
+
+function autoResizeNoteTextarea(textarea) {
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
+function autoResizeNoteTextareasIn(container) {
+  if (!container) return;
+  container
+    .querySelectorAll("textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note]")
+    .forEach((textarea) => autoResizeNoteTextarea(textarea));
+}
+
+function rerenderRouteListKeepingPointFocus(pointKey, selectionStart = null, selectionEnd = null) {
+  renderRouteList();
+  renderTransportDetail();
+  if (!pointKey) return;
+  const nextInput = Array.from(els.routeList.querySelectorAll("input[data-point-input]")).find(
+    (el) => el.dataset.pointInput === pointKey,
+  );
+  if (!nextInput) return;
+  nextInput.focus({ preventScroll: true });
+  if (Number.isInteger(selectionStart) && Number.isInteger(selectionEnd)) {
+    try {
+      nextInput.setSelectionRange(selectionStart, selectionEnd);
+    } catch {
+      // noop
+    }
+  }
+}
+
 els.transportForm.addEventListener("submit", (e) => {
   e.preventDefault();
   handleAddRoutePoint();
 });
 
-function updateOriginByInputElement(inputEl) {
+function updateOriginByInputElement(inputEl, options = {}) {
+  const { render = true, save = true } = options;
   const card = inputEl.closest(".card");
   const dayIndexRaw = card ? Number(card.dataset.dayCardIndex) : NaN;
   const dayIndex = Number.isInteger(dayIndexRaw) ? dayIndexRaw : state.activeDayIndex;
   if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
   state.transportDays[dayIndex].origin = inputEl.value.trim();
+  if (render) {
+    renderRouteListIntoDayCard(dayIndex);
+  }
   if (dayIndex === state.activeDayIndex) {
-    renderRouteList();
-    renderTransportDetail();
+    if (render) {
+      renderRouteList();
+      renderTransportDetail();
+    }
+    if (save) {
+      saveTransportState();
+    }
+    return;
+  }
+  syncDayCardInputsFromState(dayIndex);
+  if (render) {
+    renderRouteListIntoDayCard(dayIndex);
+  }
+  if (save) {
+    saveTransportState();
   }
 }
 
 document.addEventListener("input", (e) => {
   const originInput = e.target.closest("input[list='origin-history']");
   if (!originInput) return;
-  updateOriginByInputElement(originInput);
+  const isComposing = Boolean(e.isComposing || (e.inputType && e.inputType.includes("Composition")));
+  updateOriginByInputElement(originInput, { render: !isComposing, save: !isComposing });
 });
 
 document.addEventListener("change", (e) => {
   const originInput = e.target.closest("input[list='origin-history']");
   if (!originInput) return;
+  updateOriginByInputElement(originInput, { render: true, save: true });
   saveOriginHistory(originInput.value);
 });
 
@@ -2154,15 +3693,214 @@ if (deleteRouteDayBtn) {
   });
 }
 
+function undoLastTransportAction() {
+  let snapshot = state.undoStack.pop();
+  if (!snapshot || !Array.isArray(snapshot.transportDays)) {
+    const backupDaysRaw = getStorageItemSafe("ntt-transport-days-prev", null);
+    const backupActiveRaw = getStorageItemSafe("ntt-active-day-index-prev", null);
+    if (backupDaysRaw) {
+      try {
+        const backupDays = JSON.parse(backupDaysRaw);
+        if (Array.isArray(backupDays) && backupDays.length) {
+          snapshot = {
+            transportDays: backupDays,
+            activeDayIndex: Number.isInteger(Number(backupActiveRaw)) ? Number(backupActiveRaw) : 0,
+          };
+        }
+      } catch {
+        // noop
+      }
+    }
+  }
+  if (!snapshot || !Array.isArray(snapshot.transportDays)) {
+    setStatus("戻せる操作がありません。", true);
+    return;
+  }
+
+  state.isApplyingUndo = true;
+  state.undoTypingSessionKey = "";
+  state.transportDays = snapshot.transportDays.map((day, idx) => {
+    const normalized = {
+      origin: typeof day?.origin === "string" ? day.origin : "",
+      originNote: typeof day?.originNote === "string" ? day.originNote : "",
+      originNoteExpanded: Boolean(day?.originNoteExpanded),
+      points: Array.isArray(day?.points) ? day.points.map(ensurePointObject) : [],
+      expanded: typeof day?.expanded === "boolean" ? day.expanded : idx === 0,
+      headerEstimate: typeof day?.headerEstimate === "string" ? day.headerEstimate : "",
+      segmentTimes:
+        day?.segmentTimes && typeof day.segmentTimes === "object" && !Array.isArray(day.segmentTimes)
+          ? day.segmentTimes
+          : {},
+      completed: typeof day?.completed === "boolean" ? day.completed : false,
+      orderKey: Number.isFinite(Number(day?.orderKey)) ? Number(day.orderKey) : idx,
+    };
+    normalizePlanPoints(normalized);
+    return normalized;
+  });
+  if (!state.transportDays.length) {
+    state.transportDays = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, segmentTimes: {}, completed: false, orderKey: 0 }];
+  }
+  const nextActive = Number(snapshot.activeDayIndex);
+  state.activeDayIndex =
+    Number.isInteger(nextActive) && nextActive >= 0 && nextActive < state.transportDays.length
+      ? nextActive
+      : 0;
+
+  ensureDayCardsMatchStateDays();
+  renumberDaySectionTitles();
+  refreshAllDayHistoryDropdownCaches();
+  syncAllDayCardsFromState();
+  const cards = ensureDayCardAccordionStructure();
+  cards.forEach((card, idx) => {
+    setDayCardOpen(card, idx === state.activeDayIndex);
+  });
+  setActiveDay(state.activeDayIndex);
+  renderRouteList();
+  renderTransportDetail();
+
+  const currentSnapshot = captureTransportUndoSnapshot();
+  state.lastUndoSnapshot = currentSnapshot;
+  state.lastUndoSignature = JSON.stringify(currentSnapshot);
+  state.lastUndoDaysSignature = JSON.stringify(currentSnapshot.transportDays);
+  state.lastUndoPushAt = Date.now();
+  saveTransportState();
+  state.isApplyingUndo = false;
+  setStatus("1つ前の操作に戻しました。");
+}
+
+if (els.undoActionBtn) {
+  els.undoActionBtn.addEventListener("click", () => {
+    undoLastTransportAction();
+  });
+}
+
+function isTextEditingFocused() {
+  const el = document.activeElement;
+  if (!el) return false;
+  if (el.tagName === "TEXTAREA") return true;
+  if (el.tagName !== "INPUT") return false;
+  const type = (el.getAttribute("type") || "text").toLowerCase();
+  return ["text", "search", "url", "tel", "email", "password", "number"].includes(type);
+}
+
+function updateUndoButtonViewportPosition() {
+  if (!els.undoActionBtn) return;
+  const baseBottom = 14;
+  const keyboardGap = 8;
+  const viewport = window.visualViewport;
+  if (!viewport) {
+    els.undoActionBtn.style.bottom = `${baseBottom}px`;
+    return;
+  }
+  const layoutHeight = Math.max(document.documentElement?.clientHeight || 0, window.innerHeight || 0);
+  const focusedEditing = isTextEditingFocused();
+  const vvBottom = viewport.height + viewport.offsetTop;
+  const keyboardOverlap = focusedEditing ? Math.max(0, layoutHeight - vvBottom) : 0;
+  const nextBottom = keyboardOverlap > 0 ? keyboardOverlap + keyboardGap : baseBottom;
+  els.undoActionBtn.style.bottom = `${nextBottom}px`;
+}
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", updateUndoButtonViewportPosition);
+  window.visualViewport.addEventListener("scroll", updateUndoButtonViewportPosition);
+}
+window.addEventListener("resize", updateUndoButtonViewportPosition);
+window.addEventListener("orientationchange", updateUndoButtonViewportPosition);
+document.addEventListener("focusin", updateUndoButtonViewportPosition);
+document.addEventListener("focusout", () => {
+  setTimeout(updateUndoButtonViewportPosition, 120);
+});
+
 document.addEventListener("click", (e) => {
+  const noteClearBtn = e.target.closest("button[data-note-clear]");
+  if (noteClearBtn) {
+    const tools = noteClearBtn.closest(".note-tools");
+    const wrap = tools ? tools.parentElement : null;
+    const textarea = wrap ? wrap.querySelector("textarea") : null;
+    if (!textarea) return;
+    if (!String(textarea.value || "").length) return;
+    pushUndoCheckpoint(captureTransportUndoSnapshot());
+    textarea.value = "";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.focus({ preventScroll: true });
+    setStatus("備考をクリアしました。");
+    return;
+  }
+
+  const noteFormatBtn = e.target.closest("button[data-note-format]");
+  if (noteFormatBtn) {
+    const mode = noteFormatBtn.dataset.noteFormat;
+    const prefix = mode === "checkbox" ? "☐ " : mode === "list" ? "・" : "";
+    if (!prefix) return;
+    const tools = noteFormatBtn.closest(".note-tools");
+    const wrap = tools ? tools.parentElement : null;
+    const textarea = wrap ? wrap.querySelector("textarea") : null;
+    if (!textarea) return;
+    addPrefixToNoteLines(textarea, prefix);
+    return;
+  }
+
+  const originNoteToggleBtn = e.target.closest("button[data-day-role='origin-note-toggle']");
+  if (originNoteToggleBtn) {
+    const card = originNoteToggleBtn.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+    const day = state.transportDays[dayIndex];
+    day.originNoteExpanded = !day.originNoteExpanded;
+    syncDayCardInputsFromState(dayIndex);
+    saveTransportState();
+    return;
+  }
+
+  const destinationNoteToggleBtn = e.target.closest("button[data-day-role='destination-note-toggle']");
+  if (destinationNoteToggleBtn) {
+    const card = destinationNoteToggleBtn.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+    const day = state.transportDays[dayIndex];
+    normalizePlanPoints(day);
+    let destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+    if (destinationIndex < 0) {
+      day.points.push({
+        name: "",
+        url: "",
+        note: "",
+        noteExpanded: false,
+        candidates: [],
+        isDestination: true,
+        expanded: false,
+      });
+      normalizePlanPoints(day);
+      destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+    }
+    if (destinationIndex >= 0) {
+      const current = ensurePointObject(day.points[destinationIndex]);
+      day.points[destinationIndex] = { ...current, noteExpanded: !current.noteExpanded };
+    }
+    syncDayCardInputsFromState(dayIndex);
+    if (dayIndex === state.activeDayIndex) {
+      renderRouteList();
+      renderTransportDetail();
+    } else {
+      renderRouteListIntoDayCard(dayIndex);
+    }
+    saveTransportState();
+    return;
+  }
+
+  const noteArea = e.target.closest(
+    "textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note]",
+  );
+  if (noteArea) {
+    toggleNoteCheckboxAtCursor(noteArea);
+    return;
+  }
+
   const dayFullRouteBtn = e.target.closest("button[data-open-day-full-route]");
   if (dayFullRouteBtn) {
-    const card = dayFullRouteBtn.closest(".card");
-    const dayIndex = Number(card?.dataset.dayCardIndex);
-    if (Number.isInteger(dayIndex)) {
-      setActiveDay(dayIndex);
-    }
-    const transport = getTransportModel();
+    const dayIndex = resolveDayIndexFromNode(dayFullRouteBtn);
+    setActiveDay(dayIndex);
+    const transport = getTransportModelForDay(dayIndex);
     if (!transport) {
       setStatus("STARTとGOALを入力すると全体ルートを表示できます。", true);
       return;
@@ -2173,19 +3911,16 @@ document.addEventListener("click", (e) => {
 
   const dayFullRouteYahooBtn = e.target.closest("button[data-open-day-full-route-yahoo]");
   if (dayFullRouteYahooBtn) {
-    const card = dayFullRouteYahooBtn.closest(".card");
-    const dayIndex = Number(card?.dataset.dayCardIndex);
-    if (Number.isInteger(dayIndex)) {
-      setActiveDay(dayIndex);
-    }
-    const transport = getTransportModel();
+    const dayIndex = resolveDayIndexFromNode(dayFullRouteYahooBtn);
+    setActiveDay(dayIndex);
+    const transport = getTransportModelForDay(dayIndex);
     if (!transport) {
       setStatus("STARTとGOALを入力すると全体ルートを表示できます。", true);
       return;
     }
     openYahooCarNaviRoute(transport.origin, transport.destination);
     if (transport.waypoints.length) {
-      setStatus("Yahooカーナビでは経由地を自動反映しないため、遷移先で経由地を追加してください。");
+      setStatus("Yahooナビでは経由地を自動反映しないため、遷移先で経由地を追加してください。");
     }
     return;
   }
@@ -2198,12 +3933,72 @@ document.addEventListener("click", (e) => {
     const nextOpen = body.classList.contains("hidden");
     body.classList.toggle("hidden", !nextOpen);
     sectionToggleBtn.textContent = nextOpen ? "▼" : "▶";
+    sectionToggleBtn.classList.toggle("is-open", nextOpen);
+    sectionToggleBtn.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+    if (!nextOpen) {
+      const card = sectionToggleBtn.closest(".card");
+      const dayIndex = Number(card?.dataset.dayCardIndex);
+      const day =
+        Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length
+          ? state.transportDays[dayIndex]
+          : null;
+      if (day && block && block.querySelector("input[data-day-role='origin-input']")) {
+        const hasOriginNote = Boolean((day.originNote || "").trim());
+        day.originNoteExpanded = hasOriginNote ? Boolean(day.originNoteExpanded) : false;
+      }
+      if (day && block && block.querySelector("input[data-day-role='destination-input']")) {
+        normalizePlanPoints(day);
+        const destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+        if (destinationIndex >= 0) {
+          const currentDestination = ensurePointObject(day.points[destinationIndex]);
+          const hasDestinationNote = Boolean((currentDestination.note || "").trim());
+          day.points[destinationIndex] = {
+            ...currentDestination,
+            noteExpanded: hasDestinationNote ? Boolean(currentDestination.noteExpanded) : false,
+          };
+        }
+      }
+      if (els.historyEditorModal && block && block.contains(els.historyEditorModal)) {
+        closeHistoryEditor();
+      }
+      const originInlineEditor = block ? block.querySelector("#origin-inline-editor") : null;
+      if (originInlineEditor && !originInlineEditor.classList.contains("hidden")) {
+        setOriginInlineEditorOpen(false);
+      }
+      if (block && block.querySelector("input[data-day-role='destination-input']")) {
+        state.destinationNameCandidates = [];
+        state.destinationUrlCandidates = [];
+        renderDestinationNameCandidates();
+        renderDestinationUrlCandidates();
+      }
+      if (block && block.querySelector("input[data-day-role='origin-input']")) {
+        state.originUrlCandidates = [];
+        renderOriginUrlCandidates();
+      }
+    }
+    const card = sectionToggleBtn.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+      syncDayCardInputsFromState(dayIndex);
+    }
     return;
   }
 
   const dayExportBtn = e.target.closest(".day-export-btn");
   if (dayExportBtn) {
     exportSingleDay(dayExportBtn.closest(".card"));
+    return;
+  }
+
+  const dayMoveUpBtn = e.target.closest(".day-move-up-btn");
+  if (dayMoveUpBtn) {
+    moveDaySectionByButton(dayMoveUpBtn, -1);
+    return;
+  }
+
+  const dayMoveDownBtn = e.target.closest(".day-move-down-btn");
+  if (dayMoveDownBtn) {
+    moveDaySectionByButton(dayMoveDownBtn, 1);
     return;
   }
 
@@ -2234,6 +4029,11 @@ document.addEventListener("click", (e) => {
     renderTransportDetail();
     return;
   }
+  const clearBtn = e.target.closest(".day-clear-btn");
+  if (clearBtn) {
+    clearDaySectionByButton(clearBtn);
+    return;
+  }
   const deleteBtn = e.target.closest(".day-card-delete");
   if (deleteBtn && !deleteBtn.id) {
     removeDaySectionByButton(deleteBtn);
@@ -2241,6 +4041,32 @@ document.addEventListener("click", (e) => {
 });
 
 document.addEventListener("change", async (e) => {
+  const dayCompleteCheck = e.target.closest("input.day-complete-check[data-day-complete]");
+  if (dayCompleteCheck) {
+    const card = dayCompleteCheck.closest(".card");
+    const dayIndex = card ? Number(card.dataset.dayCardIndex) : NaN;
+    applyDayCompleteState(dayIndex, dayCompleteCheck.checked);
+    return;
+  }
+
+  const dayHeaderTimeSelect = e.target.closest("select[data-day-role='day-header-time-select']");
+  if (dayHeaderTimeSelect) {
+    const card = dayHeaderTimeSelect.closest(".card");
+    const dayIndex = card ? Number(card.dataset.dayCardIndex) : NaN;
+    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+      clearUndoTypingSession();
+      const nextValue = String(dayHeaderTimeSelect.value || "");
+      const prevValue = String(state.transportDays[dayIndex].headerEstimate || "");
+      if (prevValue !== nextValue) {
+        pushUndoCheckpoint(captureTransportUndoSnapshot());
+      }
+      state.transportDays[dayIndex].headerEstimate = nextValue;
+      dayHeaderTimeSelect.classList.toggle("is-selected-time", Boolean(dayHeaderTimeSelect.value));
+      saveTransportState();
+    }
+    return;
+  }
+
   const dayImportInput = e.target.closest(".day-import-file");
   if (dayImportInput && dayImportInput.files && dayImportInput.files[0]) {
     try {
@@ -2253,6 +4079,14 @@ document.addEventListener("change", async (e) => {
     }
     return;
   }
+});
+
+document.addEventListener("click", (e) => {
+  const dayCompleteCheck = e.target.closest("input.day-complete-check[data-day-complete]");
+  if (!dayCompleteCheck) return;
+  const card = dayCompleteCheck.closest(".card");
+  const dayIndex = card ? Number(card.dataset.dayCardIndex) : NaN;
+  applyDayCompleteState(dayIndex, dayCompleteCheck.checked);
 });
 
 if (els.hotelUrlHistoryBtn) {
@@ -2276,18 +4110,20 @@ if (els.destinationHistoryBtn) {
 
 if (els.hotelUrlHistoryEditBtn) {
   els.hotelUrlHistoryEditBtn.addEventListener("click", () => {
-    openHistoryEditor("hotelUrl");
+    openHistoryEditor("hotelUrl", els.hotelUrlHistoryEditBtn, "hotel-url");
   });
 }
 
 els.originHistoryEditBtn.addEventListener("click", () => {
-  const isHidden = els.originInlineEditor?.classList.contains("hidden");
-  setOriginInlineEditorOpen(Boolean(isHidden));
+  const card = els.originHistoryEditBtn.closest(".card");
+  const dayIndex = Number(card?.dataset.dayCardIndex);
+  const key = Number.isInteger(dayIndex) ? `origin-day:${dayIndex}` : "origin-day:0";
+  openOriginInlineEditorAt(els.originHistoryEditBtn, key);
 });
 
 if (els.destinationHistoryEditBtn) {
   els.destinationHistoryEditBtn.addEventListener("click", () => {
-    openHistoryEditor("place");
+    openHistoryEditor("place", els.destinationHistoryEditBtn, "destination");
   });
 }
 
@@ -2296,9 +4132,8 @@ if (els.hotelUrlHistoryDropdown) {
     const btn = e.target.closest("button[data-use-top-history]");
     if (!btn) return;
     const value = decodeURIComponent(btn.dataset.historyValue || "");
-    els.hotelUrlInput.value = value;
+    applyHotelUrlHistorySelection(value);
     closeTopHistoryDropdowns();
-    setStatus("宿ページURLの履歴を適用しました。");
   });
 }
 
@@ -2315,21 +4150,36 @@ els.originHistoryDropdown.addEventListener("click", (e) => {
   setStatus("出発地の履歴を適用しました。");
 });
 
-if (els.defaultOriginInput) {
-  els.defaultOriginInput.addEventListener("input", () => {
-    if (!state.originInlineEditMode || !els.saveDefaultOriginBtn) return;
-    const hasValue = Boolean(els.defaultOriginInput.value.trim());
-    els.saveDefaultOriginBtn.textContent = hasValue ? "SELECT" : "DEFAULT";
-  });
-}
-
 if (els.originInlineHistoryList) {
+  const commitOriginInlineNameEdit = (target) => {
+    const input = target.closest("input[data-origin-inline-source-index]");
+    if (!input) return;
+    renameOriginHistoryBySourceIndex(input.dataset.originInlineSourceIndex, input.value);
+  };
+
+  els.originInlineHistoryList.addEventListener("change", (e) => {
+    commitOriginInlineNameEdit(e.target);
+  });
+
+  els.originInlineHistoryList.addEventListener("blur", (e) => {
+    commitOriginInlineNameEdit(e.target);
+  }, true);
+
   els.originInlineHistoryList.addEventListener("change", (e) => {
     const checkbox = e.target.closest("input[data-origin-inline-check-name]");
     if (!checkbox) return;
     const name = decodeURIComponent(checkbox.dataset.originInlineCheckName || "");
     if (!name) return;
     state.originInlineChecks[name] = checkbox.checked;
+  });
+
+  els.originInlineHistoryList.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-set-default-origin]");
+    if (!btn) return;
+    const name = decodeURIComponent(btn.dataset.setDefaultOrigin || "");
+    if (!name) return;
+    moveOriginHistoryEntryToDefault(name);
+    setStatus("デフォルト出発地を更新しました。");
   });
 
   els.originInlineHistoryList.addEventListener("dragstart", (e) => {
@@ -2364,7 +4214,7 @@ if (els.originInlineHistoryList) {
     if (fromIdx === toIdx) return;
     const [picked] = state.originHistory.splice(fromIdx, 1);
     state.originHistory.splice(toIdx, 0, picked);
-    saveJson("ntt-origin-history", state.originHistory);
+    saveJson("ntt-place-history", state.originHistory);
     renderOriginHistory();
     renderOriginInlineEditor();
   });
@@ -2409,6 +4259,20 @@ if (els.originInlineSelectAll) {
   });
 }
 
+if (els.originInlineClearAll) {
+  els.originInlineClearAll.addEventListener("click", () => {
+    state.originInlineChecks = {};
+    renderOriginInlineEditor();
+  });
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("#origin-inline-clear-all");
+  if (!btn) return;
+  state.originInlineChecks = {};
+  renderOriginInlineEditor();
+});
+
 if (els.originInlineDeleteSelected) {
   els.originInlineDeleteSelected.addEventListener("click", () => {
     const selected = new Set(
@@ -2432,7 +4296,7 @@ if (els.originInlineDeleteSelected) {
       }
     }
     state.originHistory = state.originHistory.filter((name) => !selected.has(name));
-    saveJson("ntt-origin-history", state.originHistory);
+    saveJson("ntt-place-history", state.originHistory);
     state.originInlineChecks = {};
     renderOriginHistory();
     renderOriginInlineEditor();
@@ -2464,6 +4328,117 @@ if (els.destinationHistoryDropdown) {
   });
 }
 
+if (els.originUrlSuggestBtn) {
+  els.originUrlSuggestBtn.addEventListener("click", () => {
+    openMapAndShowUrlInput("origin");
+  });
+}
+
+if (els.destinationUrlSuggestBtn) {
+  els.destinationUrlSuggestBtn.addEventListener("click", () => {
+    openMapAndShowUrlInput("destination");
+  });
+}
+
+if (els.originMapUrlApply) {
+  els.originMapUrlApply.addEventListener("click", () => {
+    const sourceUrl = (els.originMapUrlInput && els.originMapUrlInput.value) || "";
+    if (!sourceUrl.trim()) {
+      setStatus("START用のGoogleMap URLを入力してください。", true);
+      return;
+    }
+    suggestCandidatesFromPastedUrl("origin", sourceUrl);
+  });
+}
+
+if (els.destinationMapUrlApply) {
+  els.destinationMapUrlApply.addEventListener("click", () => {
+    const sourceUrl = (els.destinationMapUrlInput && els.destinationMapUrlInput.value) || "";
+    if (!sourceUrl.trim()) {
+      setStatus("GOAL用のGoogleMap URLを入力してください。", true);
+      return;
+    }
+    suggestCandidatesFromPastedUrl("destination", sourceUrl);
+  });
+}
+
+if (els.originUrlCandidates) {
+  els.originUrlCandidates.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-apply-origin-url-candidate]");
+    if (!btn) return;
+    const name = decodeURIComponent(btn.dataset.applyOriginUrlCandidate || "");
+    if (!name) return;
+    if (els.originInput) {
+      els.originInput.value = name;
+      updateOriginByInputElement(els.originInput);
+      saveOriginHistory(name);
+    }
+    state.originUrlCandidates = [];
+    renderOriginUrlCandidates();
+    setStatus(`STARTを「${name}」に設定しました。`);
+  });
+}
+
+if (els.destinationUrlCandidates) {
+  els.destinationUrlCandidates.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-apply-destination-url-candidate]");
+    if (!btn) return;
+    const name = decodeURIComponent(btn.dataset.applyDestinationUrlCandidate || "");
+    if (!name) return;
+    if (els.destinationInput) {
+      els.destinationInput.value = name;
+    }
+    syncDestinationFromInput(name);
+    state.destinationUrlCandidates = [];
+    renderDestinationUrlCandidates();
+    setStatus(`GOALを「${name}」に設定しました。`);
+  });
+}
+
+if (els.destinationNameSuggestBtn) {
+  els.destinationNameSuggestBtn.addEventListener("click", () => {
+    const existing = Array.isArray(state.destinationNameCandidates) ? state.destinationNameCandidates : [];
+    if (existing.length) {
+      state.destinationNameCandidates = [];
+      renderDestinationNameCandidates();
+      setStatus("名称候補を閉じました。");
+      return;
+    }
+    const query = (els.destinationInput?.value || "").trim();
+    if (!query) {
+      setStatus("名称候補を取るには、先にGOAL名を入力してください。", true);
+      return;
+    }
+    setStatus("名称候補を取得中です...");
+    fetchGoogleSuggestions(query)
+      .then((candidates) => {
+        state.destinationNameCandidates = Array.isArray(candidates) ? candidates : [];
+        renderDestinationNameCandidates();
+        setStatus(
+          state.destinationNameCandidates.length
+            ? "名称候補を取得しました。候補を押すとGOAL名を置換できます。"
+            : "名称候補が見つかりませんでした。",
+          !state.destinationNameCandidates.length,
+        );
+      })
+      .catch(() => {
+        setStatus("名称候補の取得に失敗しました。時間を置いて再試行してください。", true);
+      });
+  });
+}
+
+if (els.destinationGoogleSearchBtn) {
+  els.destinationGoogleSearchBtn.addEventListener("click", () => {
+    const query = (els.destinationInput?.value || "").trim();
+    if (!query) {
+      setStatus("検索するGOAL名を入力してください。", true);
+      return;
+    }
+    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+    openExternalUrl(searchUrl);
+  });
+}
+
 document.addEventListener("click", (e) => {
   const originHistoryBtn = e.target.closest("button[data-day-role='origin-history-btn']");
   if (originHistoryBtn && !originHistoryBtn.id) {
@@ -2486,6 +4461,42 @@ document.addEventListener("click", (e) => {
     return;
   }
 
+  const originHistoryEditBtn = e.target.closest("button[data-day-role='origin-history-edit-btn']");
+  if (originHistoryEditBtn && !originHistoryEditBtn.id) {
+    e.stopPropagation();
+    const card = originHistoryEditBtn.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+      setActiveDay(dayIndex);
+      openOriginInlineEditorAt(originHistoryEditBtn, `origin-day:${dayIndex}`);
+    }
+    return;
+  }
+
+  const destinationHistoryEditBtn = e.target.closest("button[data-day-role='destination-history-edit-btn']");
+  if (destinationHistoryEditBtn && !destinationHistoryEditBtn.id) {
+    e.stopPropagation();
+    const card = destinationHistoryEditBtn.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+      setActiveDay(dayIndex);
+      openHistoryEditor("place", destinationHistoryEditBtn, `destination-day:${dayIndex}`);
+    }
+    return;
+  }
+
+  const hotelUrlHistoryEditBtn = e.target.closest("button[data-day-role='hotel-url-history-edit-btn']");
+  if (hotelUrlHistoryEditBtn && !hotelUrlHistoryEditBtn.id) {
+    e.stopPropagation();
+    const card = hotelUrlHistoryEditBtn.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+      setActiveDay(dayIndex);
+      openHistoryEditor("hotelUrl", hotelUrlHistoryEditBtn, `hotel-url-day:${dayIndex}`);
+    }
+    return;
+  }
+
   const historyUseBtn = e.target.closest("button[data-use-top-history]");
   if (!historyUseBtn) return;
   const dropdown = historyUseBtn.closest("[data-day-role='origin-history-dropdown'], [data-day-role='destination-history-dropdown'], [data-day-role='hotel-url-history-dropdown']");
@@ -2505,15 +4516,16 @@ document.addEventListener("click", (e) => {
     if (dayIndex === state.activeDayIndex) {
       renderRouteList();
       renderTransportDetail();
+    } else {
+      syncDayCardInputsFromState(dayIndex);
+      renderRouteListIntoDayCard(dayIndex);
     }
+    saveTransportState();
     setStatus("出発地の履歴を適用しました。");
     return;
   }
 
   if (target === "destination") {
-    const destinationInput = card.querySelector("input[data-day-role='destination-input']");
-    if (destinationInput) destinationInput.value = value;
-    setActiveDay(dayIndex);
     const hotel = ensureHotelInListFromHistoryName(value);
     if (hotel) {
       state.selectedHotel = hotel;
@@ -2521,18 +4533,50 @@ document.addEventListener("click", (e) => {
       renderHotelResults();
       renderSelectedHotel();
     } else {
-      syncDestinationFromInput(value, { saveHistory: false });
+      const destinationInput = card.querySelector("input[data-day-role='destination-input']");
+      if (destinationInput) {
+        destinationInput.value = value;
+        updateDestinationByInputElement(destinationInput, { render: false, saveHistory: false });
+      } else {
+        const day = state.transportDays[dayIndex];
+        if (day) {
+          normalizePlanPoints(day);
+          const destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+          if (destinationIndex >= 0) {
+            const current = ensurePointObject(day.points[destinationIndex]);
+            day.points[destinationIndex] = { ...current, name: value.trim(), isDestination: true };
+          } else {
+            day.points.push({
+              name: value.trim(),
+              url: "",
+              note: "",
+              noteExpanded: false,
+              candidates: [],
+              isDestination: true,
+              expanded: false,
+            });
+            normalizePlanPoints(day);
+          }
+        }
+      }
+    }
+    if (dayIndex === state.activeDayIndex) {
+      renderRouteList();
+      renderTransportDetail();
+    } else {
+      syncDayCardInputsFromState(dayIndex);
+      renderRouteListIntoDayCard(dayIndex);
     }
     closeAllDayHistoryDropdowns();
+    saveTransportState();
     setStatus("目的地の履歴を適用しました。");
     return;
   }
 
   if (target === "hotelUrl") {
-    const hotelUrlInput = card.querySelector("input[data-day-role='hotel-url-input']");
-    if (hotelUrlInput) hotelUrlInput.value = value;
+    applyHotelUrlHistorySelection(value, card);
     closeAllDayHistoryDropdowns();
-    setStatus("宿ページURLの履歴を適用しました。");
+    setStatus("宿ページURLの履歴から登録しました。");
   }
 });
 
@@ -2542,9 +4586,15 @@ document.addEventListener("click", (e) => {
     target.closest("#hotel-url-history-btn") ||
     target.closest("#origin-history-btn") ||
     target.closest("#destination-history-btn") ||
+    target.closest("button[data-day-role='hotel-url-history-btn']") ||
+    target.closest("button[data-day-role='origin-history-btn']") ||
+    target.closest("button[data-day-role='destination-history-btn']") ||
     target.closest("#hotel-url-history-dropdown") ||
     target.closest("#origin-history-dropdown") ||
-    target.closest("#destination-history-dropdown")
+    target.closest("#destination-history-dropdown") ||
+    target.closest("[data-day-role='hotel-url-history-dropdown']") ||
+    target.closest("[data-day-role='origin-history-dropdown']") ||
+    target.closest("[data-day-role='destination-history-dropdown']")
   ) {
     return;
   }
@@ -2552,11 +4602,114 @@ document.addEventListener("click", (e) => {
   closeAllDayHistoryDropdowns();
 });
 
-if (els.destinationInput) {
-  els.destinationInput.addEventListener("change", () => {
-    syncDestinationFromInput(els.destinationInput.value);
-  });
-}
+document.addEventListener("input", (e) => {
+  const destinationInput = e.target.closest("input[data-day-role='destination-input']");
+  if (!destinationInput) return;
+  const isComposing = Boolean(e.isComposing || (e.inputType && e.inputType.includes("Composition")));
+  updateDestinationByInputElement(destinationInput, { render: !isComposing, saveHistory: false, save: !isComposing });
+});
+
+document.addEventListener("input", (e) => {
+  const originNoteInput = e.target.closest("textarea[data-day-role='origin-note-input']");
+  if (originNoteInput) {
+    autoResizeNoteTextarea(originNoteInput);
+    const card = originNoteInput.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+    state.transportDays[dayIndex].originNote = originNoteInput.value || "";
+    saveTransportState();
+    return;
+  }
+
+  const destinationNoteInput = e.target.closest("textarea[data-day-role='destination-note-input']");
+  if (destinationNoteInput) {
+    autoResizeNoteTextarea(destinationNoteInput);
+    const card = destinationNoteInput.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
+    if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+    const day = state.transportDays[dayIndex];
+    normalizePlanPoints(day);
+    let destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+    if (destinationIndex < 0) {
+      day.points.push({
+        name: "",
+        url: "",
+        note: "",
+        noteExpanded: true,
+        candidates: [],
+        isDestination: true,
+        expanded: false,
+      });
+      normalizePlanPoints(day);
+      destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
+    }
+    if (destinationIndex >= 0) {
+      const current = ensurePointObject(day.points[destinationIndex]);
+      day.points[destinationIndex] = { ...current, note: destinationNoteInput.value || "" };
+    }
+    saveTransportState();
+  }
+});
+
+document.addEventListener("change", (e) => {
+  const destinationInput = e.target.closest("input[data-day-role='destination-input']");
+  if (!destinationInput) return;
+  const card = destinationInput.closest(".card");
+  const dayIndex = Number(card?.dataset.dayCardIndex);
+  if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+    setActiveDay(dayIndex);
+  }
+  updateDestinationByInputElement(destinationInput, { render: true, saveHistory: true });
+});
+
+document.addEventListener("focusin", (e) => {
+  const dayScopedField = e.target.closest(
+    "input[data-day-role='origin-input'], input[data-day-role='destination-input'], input[data-point-input], input[data-point-url], select[data-day-role='day-header-time-select']",
+  );
+  if (!dayScopedField) return;
+  const card = dayScopedField.closest(".card");
+  const dayIndex = Number(card?.dataset.dayCardIndex);
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return;
+  if (dayIndex === state.activeDayIndex) return;
+  setActiveDay(dayIndex);
+});
+
+document.addEventListener("focusin", (e) => {
+  const textField = e.target.closest(
+    "textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note], input[data-day-role='origin-input'], input[data-day-role='destination-input'], input[data-point-input], input[data-point-url]",
+  );
+  if (!textField) return;
+  if (state.undoTypingClearTimer) {
+    clearTimeout(state.undoTypingClearTimer);
+    state.undoTypingClearTimer = null;
+  }
+  const key = getUndoFieldKey(textField);
+  if (!key) return;
+  if (state.undoTypingSessionKey === key) return;
+  state.undoTypingSessionKey = key;
+  pushUndoCheckpoint(captureTransportUndoSnapshot());
+});
+
+document.addEventListener("focusout", (e) => {
+  const textField = e.target.closest(
+    "textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note], input[data-day-role='origin-input'], input[data-day-role='destination-input'], input[data-point-input], input[data-point-url]",
+  );
+  if (!textField) return;
+  const leavingKey = getUndoFieldKey(textField);
+  if (state.undoTypingClearTimer) {
+    clearTimeout(state.undoTypingClearTimer);
+    state.undoTypingClearTimer = null;
+  }
+  state.undoTypingClearTimer = setTimeout(() => {
+    const active = document.activeElement;
+    const activeKey = getUndoFieldKey(active);
+    if (!activeKey || activeKey !== leavingKey) {
+      state.undoTypingSessionKey = "";
+      state.lastUndoPushAt = Date.now();
+    }
+    state.undoTypingClearTimer = null;
+  }, 120);
+});
 
 if (els.exportAllDaysBtn) {
   els.exportAllDaysBtn.addEventListener("click", () => {
@@ -2635,7 +4788,10 @@ if (els.exportChoiceLine) {
   });
 }
 
-els.routeList.addEventListener("click", (e) => {
+const routeEventsHost = document.getElementById("day-sections") || els.routeList;
+
+if (routeEventsHost) {
+routeEventsHost.addEventListener("click", (e) => {
   const disabledSegmentBtn = e.target.closest("button[data-open-segment-disabled], button[data-open-segment-yahoo-disabled]");
   if (disabledSegmentBtn) {
     const reason = disabledSegmentBtn.dataset.segmentReason || "区間ルートを生成できません。";
@@ -2656,8 +4812,38 @@ els.routeList.addEventListener("click", (e) => {
     setActiveDay(dayIndex);
     if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= state.transportPlan.points.length) return;
     const current = ensurePointObject(state.transportPlan.points[pointIndex]);
-    state.transportPlan.points[pointIndex] = { ...current, expanded: !current.expanded };
+    const nextExpanded = !current.expanded;
+    const pointKey = `${dayIndex}:${pointIndex}`;
+    if (!nextExpanded) {
+      if (state.activeHistoryDropdownIndex === pointKey) {
+        state.activeHistoryDropdownIndex = null;
+      }
+      if (
+        state.historyEditorTarget === "place" &&
+        state.historyEditorAnchorKey === `waypoint:${pointKey}`
+      ) {
+        closeHistoryEditor();
+      }
+    }
+    state.transportPlan.points[pointIndex] = {
+      ...current,
+      expanded: nextExpanded,
+      noteExpanded: nextExpanded ? current.noteExpanded : (current.note || "").trim() ? current.noteExpanded : false,
+      candidates: nextExpanded ? current.candidates : [],
+    };
     renderRouteList();
+    return;
+  }
+
+  const togglePointNoteBtn = e.target.closest("button[data-toggle-point-note]");
+  if (togglePointNoteBtn) {
+    const { dayIndex, pointIndex } = parseDayAndIndex(togglePointNoteBtn.dataset.togglePointNote);
+    setActiveDay(dayIndex);
+    if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= state.transportPlan.points.length) return;
+    const current = ensurePointObject(state.transportPlan.points[pointIndex]);
+    state.transportPlan.points[pointIndex] = { ...current, noteExpanded: !current.noteExpanded };
+    renderRouteList();
+    saveTransportState();
     return;
   }
 
@@ -2710,7 +4896,8 @@ els.routeList.addEventListener("click", (e) => {
 
   const editHistoryBtn = e.target.closest("button[data-edit-history]");
   if (editHistoryBtn) {
-    openHistoryEditor("place");
+    const key = editHistoryBtn.dataset.editHistory || "";
+    openHistoryEditor("place", editHistoryBtn, `waypoint:${key}`);
     return;
   }
 
@@ -2763,11 +4950,11 @@ els.routeList.addEventListener("click", (e) => {
         return;
       }
       openYahooCarNaviRoute(segment.from, segment.to);
-      setStatus(`区間「${segment.from} → ${segment.to}」をYahooカーナビで表示します。`);
+      setStatus(`区間「${segment.from} → ${segment.to}」をYahooナビで表示します。`);
       return;
     }
     openYahooCarNaviRoute(from, to);
-    setStatus(`区間「${from} → ${to}」をYahooカーナビで表示します。`);
+    setStatus(`区間「${from} → ${to}」をYahooナビで表示します。`);
     return;
   }
 
@@ -2776,6 +4963,13 @@ els.routeList.addEventListener("click", (e) => {
     const { dayIndex, pointIndex } = parseDayAndIndex(suggestBtn.dataset.googleSuggest);
     setActiveDay(dayIndex);
     const current = ensurePointObject(state.transportPlan.points[pointIndex]);
+    if (Array.isArray(current.candidates) && current.candidates.length) {
+      state.transportPlan.points[pointIndex] = { ...current, candidates: [] };
+      renderRouteList();
+      renderTransportDetail();
+      setStatus("名称候補を閉じました。");
+      return;
+    }
     const query = current.name.trim();
     if (!query) {
       setStatus("Google検索候補を取るには、先に地名や施設名を入力してください。", true);
@@ -2798,6 +4992,12 @@ els.routeList.addEventListener("click", (e) => {
       .catch(() => {
         setStatus("Google検索候補の取得に失敗しました。時間を置いて再試行してください。", true);
       });
+    return;
+  }
+
+  const urlSuggestBtn = e.target.closest("button[data-url-suggest]");
+  if (urlSuggestBtn) {
+    openMapPicker("https://www.google.com/maps");
     return;
   }
 
@@ -2828,7 +5028,7 @@ els.routeList.addEventListener("click", (e) => {
       return;
     }
     const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
-    window.open(searchUrl, "_blank", "noopener,noreferrer");
+    openExternalUrl(searchUrl);
     return;
   }
 
@@ -2871,7 +5071,7 @@ els.routeList.addEventListener("click", (e) => {
     renderHotelResults();
     renderRouteListIntoDayCard(toDay);
     renderTransportDetail();
-    setStatus(`DAY${dayIndex + 1}からDAY${toDay + 1}へ移動しました。`);
+    setStatus(`DAY${dayIndex + 1}からDAY${toDay + 1}へ移動しました（関連予測時間をクリア）。`);
     return;
   }
 
@@ -2882,7 +5082,7 @@ els.routeList.addEventListener("click", (e) => {
     moveRoutePoint(pointIndex, Math.max(0, pointIndex - 1));
     renderRouteList();
     renderTransportDetail();
-    setStatus("ルート順を変更しました。");
+    setStatus("ルート順を変更しました（関連区間の予測をクリア）。");
     return;
   }
 
@@ -2893,7 +5093,7 @@ els.routeList.addEventListener("click", (e) => {
     moveRoutePoint(pointIndex, Math.min(state.transportPlan.points.length - 1, pointIndex + 1));
     renderRouteList();
     renderTransportDetail();
-    setStatus("ルート順を変更しました。");
+    setStatus("ルート順を変更しました（関連区間の予測をクリア）。");
   }
 });
 
@@ -2916,12 +5116,12 @@ if (els.transportDetail) {
 
     openYahooCarNaviRoute(transport.origin, transport.destination);
     if (transport.waypoints.length) {
-      setStatus("Yahooカーナビでは経由地を自動反映しないため、遷移先で経由地を追加してください。");
+      setStatus("Yahooナビでは経由地を自動反映しないため、遷移先で経由地を追加してください。");
     }
   });
 }
 
-els.routeList.addEventListener("input", (e) => {
+routeEventsHost.addEventListener("input", (e) => {
   const nameInput = e.target.closest("input[data-point-input]");
   if (nameInput) {
     const { dayIndex, pointIndex } = parseDayAndIndex(nameInput.dataset.pointInput);
@@ -2930,7 +5130,28 @@ els.routeList.addEventListener("input", (e) => {
     const current = ensurePointObject(state.transportPlan.points[pointIndex]);
     state.transportPlan.points[pointIndex] = { ...current, name: nameInput.value };
     normalizeRoutePoints();
+    // Mobile IME対策:
+    // 入力中はDOM再生成を避ける（再描画でキーボードが閉じるのを防止）
+    if (e.isComposing || (e.inputType && e.inputType.includes("Composition"))) {
+      renderTransportDetail();
+      return;
+    }
     renderTransportDetail();
+    saveTransportState();
+    return;
+  }
+
+  const noteInput = e.target.closest("textarea[data-point-note]");
+  if (noteInput) {
+    autoResizeNoteTextarea(noteInput);
+    const { dayIndex, pointIndex } = parseDayAndIndex(noteInput.dataset.pointNote);
+    const day = state.transportDays[dayIndex];
+    if (!day) return;
+    normalizePlanPoints(day);
+    if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= day.points.length) return;
+    const current = ensurePointObject(day.points[pointIndex]);
+    day.points[pointIndex] = { ...current, note: noteInput.value || "" };
+    saveTransportState();
     return;
   }
 
@@ -2943,24 +5164,67 @@ els.routeList.addEventListener("input", (e) => {
   state.transportPlan.points[pointIndex] = { ...current, url: urlInput.value, candidates: [] };
   normalizeRoutePoints();
   renderTransportDetail();
+  saveTransportState();
 });
 
-els.routeList.addEventListener("change", (e) => {
+routeEventsHost.addEventListener("change", (e) => {
+  const pointCheck = e.target.closest("input[data-point-check]");
+  if (pointCheck) {
+    const { dayIndex, pointIndex } = parseDayAndIndex(pointCheck.dataset.pointCheck);
+    setActiveDay(dayIndex);
+    if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= state.transportPlan.points.length) return;
+    const current = ensurePointObject(state.transportPlan.points[pointIndex]);
+    state.transportPlan.points[pointIndex] = { ...current, checked: pointCheck.checked };
+    const row = pointCheck.closest(".route-waypoint-head");
+    const nameInput = row ? row.querySelector("input[data-point-input]") : null;
+    if (nameInput) {
+      nameInput.classList.toggle("is-waypoint-checked", pointCheck.checked);
+    }
+    saveTransportState();
+    return;
+  }
+
   const segmentTimeSelect = e.target.closest("select[data-segment-time-select]");
   if (segmentTimeSelect) {
     const { dayIndex, pointIndex } = parseDayAndIndex(segmentTimeSelect.dataset.segmentTimeSelect);
+    clearUndoTypingSession();
+    const prevValue = getSegmentManualTime(dayIndex, pointIndex);
+    const nextValue = String(segmentTimeSelect.value || "");
+    if (prevValue !== nextValue) {
+      pushUndoCheckpoint(captureTransportUndoSnapshot());
+    }
     setSegmentManualTime(dayIndex, pointIndex, segmentTimeSelect.value);
+    segmentTimeSelect.classList.toggle("is-selected-time", Boolean(segmentTimeSelect.value));
     saveTransportState();
     setStatus(segmentTimeSelect.value ? "区間の手動時間を保存しました。" : "区間の手動時間をクリアしました。");
     return;
   }
 
   const nameInput = e.target.closest("input[data-point-input]");
-  if (!nameInput) return;
-  savePlaceHistory(nameInput.value);
+  if (nameInput) {
+    const { dayIndex } = parseDayAndIndex(nameInput.dataset.pointInput);
+    setActiveDay(dayIndex);
+    savePlaceHistory(nameInput.value);
+    renderRouteList();
+    renderTransportDetail();
+    return;
+  }
 });
 
-els.routeList.addEventListener("dragstart", (e) => {
+routeEventsHost.addEventListener("compositionend", (e) => {
+  const nameInput = e.target.closest("input[data-point-input]");
+  if (!nameInput) return;
+  const { dayIndex, pointIndex } = parseDayAndIndex(nameInput.dataset.pointInput);
+  setActiveDay(dayIndex);
+  if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= state.transportPlan.points.length) return;
+  const current = ensurePointObject(state.transportPlan.points[pointIndex]);
+  state.transportPlan.points[pointIndex] = { ...current, name: nameInput.value };
+  normalizeRoutePoints();
+  renderTransportDetail();
+  saveTransportState();
+});
+
+routeEventsHost.addEventListener("dragstart", (e) => {
   const dayCard = e.target.closest("[data-day-card]");
   if (dayCard && e.target.closest(".route-day-head")) {
     state.draggedDayIndex = Number(dayCard.dataset.dayCard);
@@ -2981,19 +5245,19 @@ els.routeList.addEventListener("dragstart", (e) => {
   }
 });
 
-els.routeList.addEventListener("dragend", (e) => {
+routeEventsHost.addEventListener("dragend", (e) => {
   const item = e.target.closest("li[data-day-index][data-index]");
   if (item) item.classList.remove("dragging");
   state.draggedDayIndex = null;
 });
 
-els.routeList.addEventListener("dragover", (e) => {
+routeEventsHost.addEventListener("dragover", (e) => {
   const target = e.target.closest("li[data-day-index][data-index], [data-day-card], [data-day-dropzone]");
   if (!target) return;
   e.preventDefault();
 });
 
-els.routeList.addEventListener("drop", (e) => {
+routeEventsHost.addEventListener("drop", (e) => {
   const dayCard = e.target.closest("[data-day-card]");
   if (dayCard && Number.isInteger(state.draggedDayIndex)) {
     e.preventDefault();
@@ -3040,11 +5304,15 @@ els.routeList.addEventListener("drop", (e) => {
     toPlan.points.push({ ...moving, isDestination: false });
     normalizePlanPoints(fromPlan);
     normalizePlanPoints(toPlan);
+    clearSegmentTimesForDay(fromDay);
+    clearSegmentTimesForDay(toDay);
   }
   renderRouteList();
   renderTransportDetail();
+  saveTransportState();
   setStatus("ドラッグでルートを更新しました。");
 });
+}
 
 els.historyEditorClose.addEventListener("click", closeHistoryEditor);
 
@@ -3056,16 +5324,60 @@ els.historyEditorModal.addEventListener("click", (e) => {
 
 els.historyEditorList.addEventListener("change", (e) => {
   const checkbox = e.target.closest("input[data-history-check]");
-  if (!checkbox) return;
-  const key = decodeURIComponent(checkbox.dataset.historyCheck || "");
-  state.historyEditorChecks[key] = checkbox.checked;
+  if (checkbox) {
+    const key = decodeURIComponent(checkbox.dataset.historyCheck || "");
+    state.historyEditorChecks[key] = checkbox.checked;
+    return;
+  }
+  const input = e.target.closest("input[data-history-name-edit]");
+  if (!input) return;
+  if (state.historyEditorTarget !== "place" && state.historyEditorTarget !== "origin") return;
+  const prev = decodeURIComponent(input.dataset.historyNameEdit || "");
+  const ok = renamePlaceHistoryEntry(prev, input.value);
+  if (!ok) {
+    renderHistoryEditorList();
+    return;
+  }
+  setStatus("履歴名を更新しました。");
+  renderHistoryEditorList();
 });
+
+els.historyEditorList.addEventListener(
+  "blur",
+  (e) => {
+    const input = e.target.closest("input[data-history-name-edit]");
+    if (!input) return;
+    if (state.historyEditorTarget !== "place" && state.historyEditorTarget !== "origin") return;
+    const prev = decodeURIComponent(input.dataset.historyNameEdit || "");
+    const ok = renamePlaceHistoryEntry(prev, input.value);
+    if (!ok) {
+      renderHistoryEditorList();
+      return;
+    }
+    renderHistoryEditorList();
+  },
+  true,
+);
 
 els.historySelectAll.addEventListener("click", () => {
   const list = getHistoryByTarget(state.historyEditorTarget);
   state.historyEditorChecks = Object.fromEntries(
     list.map((item) => [state.historyEditorTarget === "hotelUrl" ? item.url : item, true]),
   );
+  renderHistoryEditorList();
+});
+
+if (els.historyClearAll) {
+  els.historyClearAll.addEventListener("click", () => {
+    state.historyEditorChecks = {};
+    renderHistoryEditorList();
+  });
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("#history-clear-all");
+  if (!btn) return;
+  state.historyEditorChecks = {};
   renderHistoryEditorList();
 });
 
@@ -3158,16 +5470,25 @@ if (els.clearAll) {
   els.clearAll.addEventListener("click", () => {
   state.hotels = [];
   state.selectedHotel = null;
-  state.transportDays = [{ origin: "", points: [], expanded: true, segmentTimes: {} }];
+  state.transportDays = [{ origin: "", originNote: "", originNoteExpanded: false, points: [], expanded: true, segmentTimes: {}, completed: false, orderKey: 0 }];
   state.activeDayIndex = 0;
   state.draggedPointIndex = null;
   state.draggedDayIndex = null;
   state.spots = [];
   state.history = [];
+  state.undoStack = [];
+  state.lastUndoSnapshot = null;
+  state.lastUndoSignature = "";
+  state.lastUndoDaysSignature = "";
+  state.lastUndoPushAt = 0;
+  state.undoTypingSessionKey = "";
+  state.isApplyingUndo = false;
 
-  localStorage.removeItem("ntt-history");
-  localStorage.removeItem("ntt-transport-days");
-  localStorage.removeItem("ntt-active-day-index");
+  removeStorageItemSafe("ntt-history");
+  removeStorageItemSafe("ntt-transport-days");
+  removeStorageItemSafe("ntt-active-day-index");
+  removeStorageItemSafe("ntt-transport-days-prev");
+  removeStorageItemSafe("ntt-active-day-index-prev");
 
   els.transportForm.reset();
 
@@ -3184,7 +5505,12 @@ if (els.clearAll) {
 }
 
 function init() {
+  ensureHistoryClearButtons();
   normalizeStoredHistories();
+  normalizeAllDays();
+  sortDaysByCompletionAndOrder();
+  ensureDayCardsMatchStateDays();
+  refreshOriginInputPlaceholders();
   if (els.defaultOriginInput) {
     els.defaultOriginInput.value = state.defaultOrigin;
   }
@@ -3202,21 +5528,31 @@ function init() {
       els.destinationInput.value = destinationPoint.name;
     }
   }
-  if (!Number.isInteger(state.activeDayIndex) || state.activeDayIndex < 0 || state.activeDayIndex >= state.transportDays.length) {
-    state.activeDayIndex = 0;
-  }
+  state.activeDayIndex = 0;
   renderHotelResults();
   renderSelectedHotel();
   renderOriginHistory();
   setOriginInlineEditMode(false);
   renderOriginInlineEditor();
+  renumberDaySectionTitles();
+  refreshAllDayHistoryDropdownCaches();
+  setupDayAccordionDefaults();
+  syncAllDayCardsFromState();
   setActiveDay(state.activeDayIndex);
   renderRouteList();
   renderTransportDetail();
   renderSpots();
   renderHistory();
-  renumberDaySectionTitles();
-  setupDayAccordionDefaults();
+  autoResizeNoteTextareasIn(document);
+  syncPlaceInlineEditorButtons();
+  updateUndoButtonViewportPosition();
+  state.undoStack = [];
+  state.lastUndoSnapshot = captureTransportUndoSnapshot();
+  state.lastUndoSignature = JSON.stringify(state.lastUndoSnapshot);
+  state.lastUndoDaysSignature = JSON.stringify(state.lastUndoSnapshot.transportDays);
+  state.lastUndoPushAt = Date.now();
+  state.undoTypingSessionKey = "";
+  state.isApplyingUndo = false;
   setStatus("");
 }
 
