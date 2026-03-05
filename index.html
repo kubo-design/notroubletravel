@@ -157,10 +157,15 @@
                 <option value="price-desc">料金が高い順</option>
               </select>
             </div>
-            <form id="hotel-register-form" class="hotel-register-row">
-              <input type="url" id="hotelUrl" data-day-role="hotel-url-input" placeholder="宿泊地 URL" required />
+            <form id="hotel-register-form" class="hotel-register-row" novalidate>
+              <input type="text" inputmode="url" id="hotelUrl" data-day-role="hotel-url-input" placeholder="宿泊地 URL" />
               <button type="submit" class="goal-register-btn">登録</button>
             </form>
+            <div class="goal-action-row">
+              <button type="button" id="hotel-url-history-btn" data-day-role="hotel-url-history-btn">履歴</button>
+              <button type="button" id="hotel-url-history-edit-btn" data-day-role="hotel-url-history-edit-btn" class="origin-edit-btn" aria-label="履歴編集">☰</button>
+            </div>
+            <div id="hotel-url-history-dropdown" data-day-role="hotel-url-history-dropdown" class="route-history-dropdown hidden"></div>
             <div id="hotel-results" data-day-role="hotel-results" class="hotel-choice-list"></div>
           </div>
         </div>

@@ -323,6 +323,16 @@ function getUndoFieldKey(field) {
   return `${dayPart}:${fieldPart}`;
 }
 
+function clearUndoTypingSession() {
+  if (state.undoTypingClearTimer) {
+    clearTimeout(state.undoTypingClearTimer);
+    state.undoTypingClearTimer = null;
+  }
+  if (!state.undoTypingSessionKey) return;
+  state.undoTypingSessionKey = "";
+  state.lastUndoPushAt = Date.now();
+}
+
 function saveTransportState() {
   registerUndoSnapshot();
   if (!state.undoTypingSessionKey) {
@@ -445,8 +455,27 @@ function saveJson(key, value) {
 }
 
 function setStatus(msg, isWarning = false) {
-  els.status.textContent = msg;
-  els.status.className = isWarning ? "status wrap warning" : "status wrap";
+  const text = String(msg || "");
+  const statusEl = typeof els !== "undefined" ? els.status : null;
+  if (statusEl) {
+    statusEl.textContent = text;
+    statusEl.className = isWarning ? "status wrap warning" : "status wrap";
+  }
+  if (text) {
+    if (isWarning) {
+      console.warn(text);
+    } else {
+      console.info(text);
+    }
+  }
+  const hiddenByStyle =
+    !statusEl ||
+    statusEl.classList.contains("hidden") ||
+    window.getComputedStyle(statusEl).display === "none" ||
+    window.getComputedStyle(statusEl).visibility === "hidden";
+  if (isWarning && text && hiddenByStyle) {
+    window.alert(text);
+  }
 }
 
 function escapeHtml(value) {
@@ -553,16 +582,41 @@ function isMobileDevice() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
 }
 
+function openInNewTab(url) {
+  if (!url) return false;
+  try {
+    const popup = window.open("about:blank", "_blank");
+    if (popup) {
+      try {
+        popup.opener = null;
+      } catch {
+        // noop
+      }
+      popup.location.replace(url);
+      return true;
+    }
+  } catch {
+    // fallback below
+  }
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.target = "_blank";
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    return true;
+  } catch {
+    // fallback below
+  }
+  window.location.assign(url);
+  return false;
+}
+
 function openGoogleMap(url) {
   if (!url) return;
-  if (isMobileDevice()) {
-    // Mobile: avoid popup blockers/extra dialogs from window.open.
-    window.location.href = url;
-    return;
-  }
-  const popup = window.open(url, "_blank", "noopener,noreferrer");
-  if (popup) return;
-  window.location.href = url;
+  openInNewTab(url);
 }
 
 function openYahooCarNaviRoute(from, to) {
@@ -570,13 +624,7 @@ function openYahooCarNaviRoute(from, to) {
   const toName = (to || "").trim();
   if (!fromName || !toName) return;
   const routeUrl = `https://map.yahoo.co.jp/route/car?from=${encodeURIComponent(fromName)}&to=${encodeURIComponent(toName)}`;
-  if (isMobileDevice()) {
-    window.location.href = routeUrl;
-    return;
-  }
-  const popup = window.open(routeUrl, "_blank", "noopener,noreferrer");
-  if (popup) return;
-  window.location.href = routeUrl;
+  openInNewTab(routeUrl);
 }
 
 function openMapPicker(url = "https://www.google.com/maps") {
@@ -586,13 +634,7 @@ function openMapPicker(url = "https://www.google.com/maps") {
 
 function openExternalUrl(url) {
   if (!url) return;
-  if (isMobileDevice()) {
-    window.location.href = url;
-    return;
-  }
-  const popup = window.open(url, "_blank", "noopener,noreferrer");
-  if (popup) return;
-  window.location.href = url;
+  openInNewTab(url);
 }
 
 function extractLatLng(text) {
@@ -664,6 +706,16 @@ function normalizeUrlValue(rawUrl) {
   } catch {
     return raw;
   }
+}
+
+function createStableId(prefix = "id") {
+  const maybeCrypto = typeof globalThis !== "undefined" ? globalThis.crypto : null;
+  if (maybeCrypto && typeof maybeCrypto.randomUUID === "function") {
+    return maybeCrypto.randomUUID();
+  }
+  const time = Date.now().toString(36);
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `${prefix}-${time}-${rand}`;
 }
 
 function saveHotelUrlHistory(url, preferredName = "") {
@@ -1566,7 +1618,7 @@ function buildHotelFromUrl(rawUrl, preferredName = "") {
   const nights = calcNights(checkin, checkout);
 
   return {
-    id: crypto.randomUUID(),
+    id: createStableId("hotel"),
     checkin,
     checkout,
     nights,
@@ -2065,10 +2117,13 @@ async function fetchGoogleSuggestions(query) {
   });
 }
 
-function getTransportModel() {
-  const origin = (state.transportPlan?.origin || "").trim();
-  normalizeRoutePoints();
-  const points = state.transportPlan.points.map(ensurePointObject);
+function getTransportModelForDay(dayIndex = state.activeDayIndex) {
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return null;
+  const day = state.transportDays[dayIndex];
+  if (!day) return null;
+  normalizePlanPoints(day);
+  const origin = (day.origin || "").trim();
+  const points = (day.points || []).map(ensurePointObject);
   const destinationPoint = points.find((p) => p.isDestination) || points[points.length - 1];
   const destination = destinationPoint ? destinationPoint.name : "";
 
@@ -2088,6 +2143,27 @@ function getTransportModel() {
     time: 0,
     mapsUrl,
   };
+}
+
+function getTransportModel() {
+  return getTransportModelForDay(state.activeDayIndex);
+}
+
+function resolveDayIndexFromNode(node) {
+  const card = node?.closest ? node.closest(".card") : null;
+  if (!card) {
+    return Number.isInteger(state.activeDayIndex) ? state.activeDayIndex : 0;
+  }
+  const byDataset = Number(card.dataset.dayCardIndex);
+  if (Number.isInteger(byDataset) && byDataset >= 0 && byDataset < state.transportDays.length) {
+    return byDataset;
+  }
+  const cards = ensureDayCardAccordionStructure();
+  const byPosition = cards.indexOf(card);
+  if (byPosition >= 0 && byPosition < state.transportDays.length) {
+    return byPosition;
+  }
+  return Number.isInteger(state.activeDayIndex) ? state.activeDayIndex : 0;
 }
 
 function buildRouteSegments(plan = state.transportPlan) {
@@ -3168,59 +3244,92 @@ function renderHistory() {
 }
 
 function handleHotelRegisterSubmit(formEl) {
-  if (!formEl) return;
-  const card = formEl.closest(".card");
-  const dayIndex = Number(card?.dataset.dayCardIndex);
+  if (!formEl) return false;
+  try {
+    const card = formEl.closest(".card");
+    const dayIndex = Number(card?.dataset.dayCardIndex);
 
-  const urlInput =
-    formEl.querySelector("input[data-day-role='hotel-url-input']") ||
-    formEl.querySelector("#hotelUrl");
-  if (!urlInput) return;
+    const urlInput =
+      formEl.querySelector("input[data-day-role='hotel-url-input']") ||
+      formEl.querySelector("#hotelUrl");
+    if (!urlInput) return false;
 
-  const hotelUrlRaw = urlInput.value.trim();
-  const hotelUrl = normalizeUrlValue(hotelUrlRaw);
-  if (hotelUrl && hotelUrl !== hotelUrlRaw) {
-    urlInput.value = hotelUrl;
+    const hotelUrlRaw = urlInput.value.trim();
+    const hotelUrl = normalizeUrlValue(hotelUrlRaw);
+    if (hotelUrl && hotelUrl !== hotelUrlRaw) {
+      urlInput.value = hotelUrl;
+    }
+    const historyEntry = state.hotelUrlHistory.find((entry) => normalizeUrlValue(entry.url) === hotelUrl);
+    const existing = state.hotels.find((hotel) => normalizeUrlValue(hotel.url) === hotelUrl);
+    const item = buildHotelFromUrl(hotelUrl, historyEntry?.name || existing?.name || "");
+
+    if (!item) {
+      setStatus("有効な宿URLを入力してください。", true);
+      return false;
+    }
+
+    if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
+      setActiveDay(dayIndex);
+    }
+
+    let targetHotel = item;
+    if (existing) {
+      const merged = { ...existing, ...item, id: existing.id };
+      state.hotels = state.hotels.map((hotel) => (hotel.id === existing.id ? merged : hotel));
+      targetHotel = merged;
+    } else {
+      state.hotels.push(item);
+    }
+
+    state.selectedHotel = targetHotel;
+    try {
+      syncDestinationWithHotel(targetHotel);
+    } catch (err) {
+      console.error("syncDestinationWithHotel failed:", err);
+    }
+
+    renderHotelResults();
+    renderSelectedHotel();
+    saveHotelUrlHistory(hotelUrl, targetHotel.name);
+    savePlaceHistory(targetHotel.name);
+    closeTopHistoryDropdowns();
+    closeAllDayHistoryDropdowns();
+    formEl.reset();
+
+    const note = targetHotel.priceEstimated ? "料金はURLから取得できなかったため推定値です。" : "";
+    const msg = existing
+      ? `既存の「${targetHotel.name} (${targetHotel.site})」を目的地に設定しました。`
+      : `「${targetHotel.name} (${targetHotel.site})」をURLから自動登録しました。`;
+    setStatus(`${msg}${note}`.trim());
+    return true;
+  } catch (err) {
+    console.error("handleHotelRegisterSubmit failed:", err);
+    setStatus("宿泊地の登録に失敗しました。URLを確認して再試行してください。", true);
+    return false;
   }
-  const historyEntry = state.hotelUrlHistory.find((entry) => normalizeUrlValue(entry.url) === hotelUrl);
-  const existing = state.hotels.find((hotel) => normalizeUrlValue(hotel.url) === hotelUrl);
-  const item = buildHotelFromUrl(hotelUrl, historyEntry?.name || existing?.name || "");
+}
 
-  if (!item) {
+function applyHotelUrlHistorySelection(urlValue, card = null) {
+  const normalizedUrl = normalizeUrlValue(urlValue);
+  if (!normalizedUrl) {
     setStatus("有効な宿URLを入力してください。", true);
     return false;
   }
 
+  const targetCard = card || ensureDayCardAccordionStructure()[state.activeDayIndex] || null;
+  const scopedInput = targetCard ? targetCard.querySelector("input[data-day-role='hotel-url-input']") : null;
+  const input = scopedInput || els.hotelUrlInput;
+  if (!input) return false;
+  input.value = normalizedUrl;
+
+  const dayIndex = Number(targetCard?.dataset.dayCardIndex);
   if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
     setActiveDay(dayIndex);
   }
 
-  let targetHotel = item;
-  if (existing) {
-    const merged = { ...existing, ...item, id: existing.id };
-    state.hotels = state.hotels.map((hotel) => (hotel.id === existing.id ? merged : hotel));
-    targetHotel = merged;
-  } else {
-    state.hotels.push(item);
-  }
-
-  state.selectedHotel = targetHotel;
-  syncDestinationWithHotel(targetHotel);
-
-  renderHotelResults();
-  renderSelectedHotel();
-  saveHotelUrlHistory(hotelUrl, targetHotel.name);
-  savePlaceHistory(targetHotel.name);
-  closeTopHistoryDropdowns();
-  closeAllDayHistoryDropdowns();
-  formEl.reset();
-
-  const note = targetHotel.priceEstimated ? "料金はURLから取得できなかったため推定値です。" : "";
-  const msg = existing
-    ? `既存の「${targetHotel.name} (${targetHotel.site})」を目的地に設定しました。`
-    : `「${targetHotel.name} (${targetHotel.site})」をURLから自動登録しました。`;
-  setStatus(`${msg}${note}`.trim());
-  return true;
+  const form = input.closest("form") || els.hotelForm;
+  if (!form) return false;
+  return handleHotelRegisterSubmit(form);
 }
 
 if (els.hotelForm) {
@@ -3233,6 +3342,17 @@ if (els.hotelForm) {
 document.addEventListener("submit", (e) => {
   const form = e.target.closest("form");
   if (!form || form.id === "hotel-register-form") return;
+  const hasHotelUrlField = form.querySelector("input[data-day-role='hotel-url-input']");
+  if (!hasHotelUrlField) return;
+  e.preventDefault();
+  handleHotelRegisterSubmit(form);
+});
+
+document.addEventListener("click", (e) => {
+  const submitBtn = e.target.closest("form .goal-register-btn[type='submit']");
+  if (!submitBtn) return;
+  const form = submitBtn.closest("form");
+  if (!form) return;
   const hasHotelUrlField = form.querySelector("input[data-day-role='hotel-url-input']");
   if (!hasHotelUrlField) return;
   e.preventDefault();
@@ -3467,7 +3587,7 @@ function autoResizeNoteTextarea(textarea) {
 function autoResizeNoteTextareasIn(container) {
   if (!container) return;
   container
-    .querySelectorAll("textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note']")
+    .querySelectorAll("textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note]")
     .forEach((textarea) => autoResizeNoteTextarea(textarea));
 }
 
@@ -3778,12 +3898,9 @@ document.addEventListener("click", (e) => {
 
   const dayFullRouteBtn = e.target.closest("button[data-open-day-full-route]");
   if (dayFullRouteBtn) {
-    const card = dayFullRouteBtn.closest(".card");
-    const dayIndex = Number(card?.dataset.dayCardIndex);
-    if (Number.isInteger(dayIndex)) {
-      setActiveDay(dayIndex);
-    }
-    const transport = getTransportModel();
+    const dayIndex = resolveDayIndexFromNode(dayFullRouteBtn);
+    setActiveDay(dayIndex);
+    const transport = getTransportModelForDay(dayIndex);
     if (!transport) {
       setStatus("STARTとGOALを入力すると全体ルートを表示できます。", true);
       return;
@@ -3794,12 +3911,9 @@ document.addEventListener("click", (e) => {
 
   const dayFullRouteYahooBtn = e.target.closest("button[data-open-day-full-route-yahoo]");
   if (dayFullRouteYahooBtn) {
-    const card = dayFullRouteYahooBtn.closest(".card");
-    const dayIndex = Number(card?.dataset.dayCardIndex);
-    if (Number.isInteger(dayIndex)) {
-      setActiveDay(dayIndex);
-    }
-    const transport = getTransportModel();
+    const dayIndex = resolveDayIndexFromNode(dayFullRouteYahooBtn);
+    setActiveDay(dayIndex);
+    const transport = getTransportModelForDay(dayIndex);
     if (!transport) {
       setStatus("STARTとGOALを入力すると全体ルートを表示できます。", true);
       return;
@@ -3940,7 +4054,13 @@ document.addEventListener("change", async (e) => {
     const card = dayHeaderTimeSelect.closest(".card");
     const dayIndex = card ? Number(card.dataset.dayCardIndex) : NaN;
     if (Number.isInteger(dayIndex) && dayIndex >= 0 && dayIndex < state.transportDays.length) {
-      state.transportDays[dayIndex].headerEstimate = String(dayHeaderTimeSelect.value || "");
+      clearUndoTypingSession();
+      const nextValue = String(dayHeaderTimeSelect.value || "");
+      const prevValue = String(state.transportDays[dayIndex].headerEstimate || "");
+      if (prevValue !== nextValue) {
+        pushUndoCheckpoint(captureTransportUndoSnapshot());
+      }
+      state.transportDays[dayIndex].headerEstimate = nextValue;
       dayHeaderTimeSelect.classList.toggle("is-selected-time", Boolean(dayHeaderTimeSelect.value));
       saveTransportState();
     }
@@ -4012,9 +4132,8 @@ if (els.hotelUrlHistoryDropdown) {
     const btn = e.target.closest("button[data-use-top-history]");
     if (!btn) return;
     const value = decodeURIComponent(btn.dataset.historyValue || "");
-    els.hotelUrlInput.value = value;
+    applyHotelUrlHistorySelection(value);
     closeTopHistoryDropdowns();
-    setStatus("宿ページURLの履歴を適用しました。");
   });
 }
 
@@ -4455,10 +4574,9 @@ document.addEventListener("click", (e) => {
   }
 
   if (target === "hotelUrl") {
-    const hotelUrlInput = card.querySelector("input[data-day-role='hotel-url-input']");
-    if (hotelUrlInput) hotelUrlInput.value = value;
+    applyHotelUrlHistorySelection(value, card);
     closeAllDayHistoryDropdowns();
-    setStatus("宿ページURLの履歴を適用しました。");
+    setStatus("宿ページURLの履歴から登録しました。");
   }
 });
 
@@ -4670,71 +4788,10 @@ if (els.exportChoiceLine) {
   });
 }
 
-document.addEventListener("click", (e) => {
-  const routeListHost = e.target.closest("[data-day-role='route-list']");
-  if (!routeListHost || routeListHost === els.routeList) return;
+const routeEventsHost = document.getElementById("day-sections") || els.routeList;
 
-  const removeBtn = e.target.closest("button[data-remove-point]");
-  if (removeBtn) {
-    const { dayIndex, pointIndex } = parseDayAndIndex(removeBtn.dataset.removePoint);
-    const day = state.transportDays[dayIndex];
-    if (!day) return;
-    normalizePlanPoints(day);
-    if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= day.points.length) return;
-    day.points.splice(pointIndex, 1);
-    normalizePlanPoints(day);
-    renderRouteListIntoDayCard(dayIndex);
-    if (dayIndex === state.activeDayIndex) {
-      renderRouteList();
-      renderTransportDetail();
-    }
-    saveTransportState();
-    setStatus("ルート地点を削除しました。");
-    return;
-  }
-
-  const disabledSegmentBtn = e.target.closest("button[data-open-segment-disabled], button[data-open-segment-yahoo-disabled]");
-  if (disabledSegmentBtn) {
-    const reason = disabledSegmentBtn.dataset.segmentReason || "区間ルートを生成できません。";
-    setStatus(reason, true);
-    return;
-  }
-
-  const addWaypointAtBtn = e.target.closest("button[data-add-waypoint-at]");
-  if (addWaypointAtBtn) {
-    const { dayIndex, pointIndex } = parseDayAndIndex(addWaypointAtBtn.dataset.addWaypointAt);
-    handleAddRoutePoint(dayIndex, pointIndex);
-    return;
-  }
-
-  const segmentBtn = e.target.closest("button[data-open-segment], button[data-open-segment-from]");
-  if (segmentBtn) {
-    const from = decodeURIComponent(segmentBtn.dataset.openSegmentFrom || "");
-    const to = decodeURIComponent(segmentBtn.dataset.openSegmentTo || "");
-    if (!from || !to) {
-      setStatus("区間ルートを生成できませんでした。", true);
-      return;
-    }
-    const mapsUrl = `https://www.google.com/maps/dir/${encodeURIComponent(from)}/${encodeURIComponent(to)}`;
-    openGoogleMap(mapsUrl);
-    setStatus(`区間「${from} → ${to}」のGoogleMapを表示しました。`);
-    return;
-  }
-
-  const segmentYahooBtn = e.target.closest("button[data-open-segment-yahoo], button[data-open-segment-yahoo-from]");
-  if (segmentYahooBtn) {
-    const from = decodeURIComponent(segmentYahooBtn.dataset.openSegmentYahooFrom || "");
-    const to = decodeURIComponent(segmentYahooBtn.dataset.openSegmentYahooTo || "");
-    if (!from || !to) {
-      setStatus("区間ルートを生成できませんでした。", true);
-      return;
-    }
-    openYahooCarNaviRoute(from, to);
-    setStatus(`区間「${from} → ${to}」をYahooナビで表示します。`);
-  }
-});
-
-els.routeList.addEventListener("click", (e) => {
+if (routeEventsHost) {
+routeEventsHost.addEventListener("click", (e) => {
   const disabledSegmentBtn = e.target.closest("button[data-open-segment-disabled], button[data-open-segment-yahoo-disabled]");
   if (disabledSegmentBtn) {
     const reason = disabledSegmentBtn.dataset.segmentReason || "区間ルートを生成できません。";
@@ -5064,7 +5121,7 @@ if (els.transportDetail) {
   });
 }
 
-els.routeList.addEventListener("input", (e) => {
+routeEventsHost.addEventListener("input", (e) => {
   const nameInput = e.target.closest("input[data-point-input]");
   if (nameInput) {
     const { dayIndex, pointIndex } = parseDayAndIndex(nameInput.dataset.pointInput);
@@ -5110,7 +5167,7 @@ els.routeList.addEventListener("input", (e) => {
   saveTransportState();
 });
 
-els.routeList.addEventListener("change", (e) => {
+routeEventsHost.addEventListener("change", (e) => {
   const pointCheck = e.target.closest("input[data-point-check]");
   if (pointCheck) {
     const { dayIndex, pointIndex } = parseDayAndIndex(pointCheck.dataset.pointCheck);
@@ -5130,6 +5187,12 @@ els.routeList.addEventListener("change", (e) => {
   const segmentTimeSelect = e.target.closest("select[data-segment-time-select]");
   if (segmentTimeSelect) {
     const { dayIndex, pointIndex } = parseDayAndIndex(segmentTimeSelect.dataset.segmentTimeSelect);
+    clearUndoTypingSession();
+    const prevValue = getSegmentManualTime(dayIndex, pointIndex);
+    const nextValue = String(segmentTimeSelect.value || "");
+    if (prevValue !== nextValue) {
+      pushUndoCheckpoint(captureTransportUndoSnapshot());
+    }
     setSegmentManualTime(dayIndex, pointIndex, segmentTimeSelect.value);
     segmentTimeSelect.classList.toggle("is-selected-time", Boolean(segmentTimeSelect.value));
     saveTransportState();
@@ -5148,7 +5211,7 @@ els.routeList.addEventListener("change", (e) => {
   }
 });
 
-els.routeList.addEventListener("compositionend", (e) => {
+routeEventsHost.addEventListener("compositionend", (e) => {
   const nameInput = e.target.closest("input[data-point-input]");
   if (!nameInput) return;
   const { dayIndex, pointIndex } = parseDayAndIndex(nameInput.dataset.pointInput);
@@ -5161,7 +5224,7 @@ els.routeList.addEventListener("compositionend", (e) => {
   saveTransportState();
 });
 
-els.routeList.addEventListener("dragstart", (e) => {
+routeEventsHost.addEventListener("dragstart", (e) => {
   const dayCard = e.target.closest("[data-day-card]");
   if (dayCard && e.target.closest(".route-day-head")) {
     state.draggedDayIndex = Number(dayCard.dataset.dayCard);
@@ -5182,19 +5245,19 @@ els.routeList.addEventListener("dragstart", (e) => {
   }
 });
 
-els.routeList.addEventListener("dragend", (e) => {
+routeEventsHost.addEventListener("dragend", (e) => {
   const item = e.target.closest("li[data-day-index][data-index]");
   if (item) item.classList.remove("dragging");
   state.draggedDayIndex = null;
 });
 
-els.routeList.addEventListener("dragover", (e) => {
+routeEventsHost.addEventListener("dragover", (e) => {
   const target = e.target.closest("li[data-day-index][data-index], [data-day-card], [data-day-dropzone]");
   if (!target) return;
   e.preventDefault();
 });
 
-els.routeList.addEventListener("drop", (e) => {
+routeEventsHost.addEventListener("drop", (e) => {
   const dayCard = e.target.closest("[data-day-card]");
   if (dayCard && Number.isInteger(state.draggedDayIndex)) {
     e.preventDefault();
@@ -5249,6 +5312,7 @@ els.routeList.addEventListener("drop", (e) => {
   saveTransportState();
   setStatus("ドラッグでルートを更新しました。");
 });
+}
 
 els.historyEditorClose.addEventListener("click", closeHistoryEditor);
 
