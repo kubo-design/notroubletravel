@@ -2414,8 +2414,7 @@ function renderDestinationCostControls(dayIndex) {
   const destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
   if (destinationIndex < 0) return;
   const destinationPoint = ensurePointObject(day.points[destinationIndex]);
-  const isGoalCostOpen =
-    typeof day.goalCostExpanded === "boolean" ? day.goalCostExpanded : Boolean(destinationPoint.costExpanded);
+  const isGoalCostOpen = Boolean(day.goalCostExpanded);
   const costItems = getPointCostItems(destinationPoint);
   const sectionBody = card.querySelector(".section-block:last-of-type .section-body");
   if (!sectionBody) return;
@@ -2436,8 +2435,9 @@ function renderDestinationCostControls(dayIndex) {
   host.innerHTML = `
     ${
       costItems
-        .map((item) => {
+        .map((item, idx) => {
           const key = `${dayIndex}:${destinationIndex}:${encodeURIComponent(item.id)}`;
+          const addKey = `${dayIndex}:${destinationIndex}`;
           return `
             <div class="point-cost-item-row">
               <select class="tiny" data-point-cost-type="${key}">
@@ -2449,12 +2449,12 @@ function renderDestinationCostControls(dayIndex) {
                 ${buildCostPeopleOptions(item.people)}
               </select>
               <button type="button" class="ghost tiny" data-remove-point-cost="${key}">削除</button>
+              <button type="button" class="ghost tiny ${idx === costItems.length - 1 ? "" : "hidden"}" data-add-point-cost="${addKey}">+</button>
             </div>
           `;
         })
         .join("")
     }
-    <button type="button" class="ghost tiny" data-add-point-cost="${dayIndex}:${destinationIndex}">+ 項目追加</button>
   `;
   const toggleBtn = card.querySelector("button[data-day-role='destination-cost-toggle']");
   if (toggleBtn) {
@@ -2483,11 +2483,13 @@ function toggleDayGoalCostAccordion(dayIndex) {
     normalizePlanPoints(day);
     destinationIndex = day.points.findIndex((p) => ensurePointObject(p).isDestination);
   }
-  if (destinationIndex < 0) return;
-  const current = ensurePointObject(day.points[destinationIndex]);
-  const currentOpen =
-    typeof day.goalCostExpanded === "boolean" ? day.goalCostExpanded : Boolean(current.costExpanded);
-  day.goalCostExpanded = !currentOpen;
+  const nextOpen = !Boolean(day.goalCostExpanded);
+  day.goalCostExpanded = nextOpen;
+  if (destinationIndex >= 0) {
+    const current = ensurePointObject(day.points[destinationIndex]);
+    day.points[destinationIndex] = { ...current, costExpanded: nextOpen };
+  }
+  syncDayCardInputsFromState(dayIndex);
   renderDestinationCostControls(dayIndex);
   saveTransportState();
 }
@@ -2507,10 +2509,42 @@ function resolveDayIndexFromGoalCostButton(button) {
   return -1;
 }
 
-window.handleGoalCostToggleClick = (button) => {
+window.handleGoalCostToggleClick = (evOrButton, maybeButton) => {
+  let ev = null;
+  let button = null;
+  if (maybeButton && maybeButton.closest) {
+    ev = evOrButton && typeof evOrButton.preventDefault === "function" ? evOrButton : null;
+    button = maybeButton;
+  } else if (evOrButton && evOrButton.closest) {
+    button = evOrButton;
+  } else {
+    return false;
+  }
+
+  if (ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+  }
+
   const dayIndex = resolveDayIndexFromGoalCostButton(button);
-  if (dayIndex < 0) return false;
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex >= state.transportDays.length) return false;
   toggleDayGoalCostAccordion(dayIndex);
+  const cards = ensureDayCardAccordionStructure();
+  const card = cards[dayIndex];
+  const day = state.transportDays[dayIndex];
+  if (card && day) {
+    const host = card.querySelector("[data-day-role='destination-cost-row']");
+    const toggleBtn = card.querySelector("button[data-day-role='destination-cost-toggle']");
+    const isOpen = Boolean(day.goalCostExpanded);
+    if (host) {
+      host.classList.toggle("hidden", !isOpen);
+      host.style.display = isOpen ? "grid" : "none";
+    }
+    if (toggleBtn) {
+      toggleBtn.textContent = isOpen ? "×" : "金額";
+      toggleBtn.classList.toggle("note-toggle-active", isOpen);
+    }
+  }
   return false;
 };
 
@@ -2562,19 +2596,7 @@ function syncDayCardInputsFromState(dayIndex) {
       destinationNoteToggleBtn.classList.toggle("note-toggle-active", isOpen);
     }
     if (destinationCostToggleBtn) {
-      destinationCostToggleBtn.dataset.dayIndex = String(dayIndex);
-      destinationCostToggleBtn.onclick = (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        const idx = resolveDayIndexFromGoalCostButton(destinationCostToggleBtn);
-        if (idx >= 0) {
-          toggleDayGoalCostAccordion(idx);
-        }
-      };
-      const isOpen =
-        typeof day.goalCostExpanded === "boolean"
-          ? day.goalCostExpanded
-          : Boolean(destinationPoint?.costExpanded);
+      const isOpen = Boolean(day.goalCostExpanded);
       destinationCostToggleBtn.textContent = isOpen ? "×" : "金額";
       destinationCostToggleBtn.classList.toggle("note-toggle-active", isOpen);
     }
@@ -2665,11 +2687,25 @@ function ensureDayCardAccordionStructure() {
       applyDayCompleteState(idx, dayCompleteCheck.checked);
     };
 
+    let headTop = head.querySelector(":scope > .day-head-top");
+    if (!headTop) {
+      headTop = document.createElement("div");
+      headTop.className = "day-head-top";
+      head.prepend(headTop);
+    }
+
+    let headBottom = head.querySelector(":scope > .day-head-bottom");
+    if (!headBottom) {
+      headBottom = document.createElement("div");
+      headBottom.className = "day-head-bottom";
+      head.appendChild(headBottom);
+    }
+
     let tools = head.querySelector(".input-tools");
     if (!tools) {
       tools = document.createElement("div");
       tools.className = "input-tools day-actions";
-      head.appendChild(tools);
+      headTop.appendChild(tools);
     } else {
       tools.classList.add("day-actions");
     }
@@ -2678,9 +2714,9 @@ function ensureDayCardAccordionStructure() {
       toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className = "ghost tiny day-accordion-toggle icon-btn";
-      dayTitle.prepend(toggle);
-    } else if (toggle.parentElement !== dayTitle) {
-      dayTitle.prepend(toggle);
+      headBottom.prepend(toggle);
+    } else if (toggle.parentElement !== headBottom) {
+      headBottom.prepend(toggle);
     }
     toggle.setAttribute("aria-label", "DAY開閉");
     toggle.setAttribute("title", "DAY開閉");
@@ -2737,9 +2773,19 @@ function ensureDayCardAccordionStructure() {
 
     const addBtn = tools.querySelector(".day-card-add");
     const deleteBtn = tools.querySelector(".day-card-delete");
+    if (dayTitle.parentElement !== headTop) {
+      headTop.prepend(dayTitle);
+    }
+    if (tools.parentElement !== headTop) {
+      headTop.appendChild(tools);
+    }
     [addBtn, clearBtn, deleteBtn, moveUpBtn, moveDownBtn, exportBtn, importBtn]
       .filter(Boolean)
       .forEach((btn) => tools.appendChild(btn));
+    const routeActions = head.querySelector(".day-route-actions");
+    if (routeActions && routeActions.parentElement !== headBottom) {
+      headBottom.appendChild(routeActions);
+    }
     if (!card.querySelector(".day-import-file")) {
       const importFile = document.createElement("input");
       importFile.type = "file";
@@ -3425,17 +3471,23 @@ function renderDayCostSummary(dayIndex) {
   const extras = Array.isArray(day.extraCosts) ? day.extraCosts.map(normalizeExtraCostItem) : [];
   host.innerHTML = `
     <div class="day-cost-header-row">
-      <button type="button" class="ghost tiny" data-add-day-extra-cost="${dayIndex}">+ 追加費用</button>
-      <div class="day-cost-label">地点合計: <strong>¥${locationTotal.toLocaleString()}</strong></div>
-      <div class="day-cost-label">交通費合計: <strong>¥${segmentTotal.toLocaleString()}</strong></div>
-      <div class="day-cost-label">追加合計: <strong>¥${extraTotal.toLocaleString()}</strong></div>
-      <div class="day-cost-label day-cost-total">DAY合計: <strong>¥${dayTotal.toLocaleString()}</strong></div>
-      <label class="day-cost-label">人数割り(÷
-        <select class="tiny point-cost-people-select" data-day-split-people="${dayIndex}">
-          ${buildCostPeopleOptions(String(splitPeople))}
-        </select>
-        人): <strong>¥${dayPerPerson.toLocaleString()}</strong>
-      </label>
+      <div class="day-cost-row day-cost-row-1">
+        <button type="button" class="ghost tiny" data-add-day-extra-cost="${dayIndex}">+ 追加費用</button>
+      </div>
+      <div class="day-cost-row day-cost-row-2">
+        <div class="day-cost-label">地点: <strong>¥${locationTotal.toLocaleString()}</strong></div>
+        <div class="day-cost-label">交通費: <strong>¥${segmentTotal.toLocaleString()}</strong></div>
+        <div class="day-cost-label">追加: <strong>¥${extraTotal.toLocaleString()}</strong></div>
+      </div>
+      <div class="day-cost-row day-cost-row-3">
+        <div class="day-cost-label day-cost-total">DAY: <strong>¥${dayTotal.toLocaleString()}</strong></div>
+        <label class="day-cost-label day-cost-split-control">
+          <select class="tiny point-cost-people-select" data-day-split-people="${dayIndex}">
+            ${COST_PEOPLE_OPTIONS.map((n) => `<option value="${n}" ${n === String(splitPeople) ? "selected" : ""}>${n}人</option>`).join("")}
+          </select>
+          <strong>¥${dayPerPerson.toLocaleString()}</strong>
+        </label>
+      </div>
     </div>
     <div class="day-extra-cost-list">
       ${
@@ -3468,10 +3520,11 @@ function renderTripCostSummary() {
   const perPerson = Math.round(total / splitPeople);
   host.innerHTML = `
     <div class="trip-total-row">
-      <strong>全日程トータルコスト: ¥${total.toLocaleString()}</strong>
+      <strong>全日程: ¥${total.toLocaleString()}</strong>
       <label class="trip-split-wrap">÷
-        <input type="text" inputmode="numeric" pattern="[0-9]*" data-trip-split-people value="${splitPeople}" class="trip-split-input" />
-        人
+        <select data-trip-split-people class="trip-split-input tiny">
+          ${COST_PEOPLE_OPTIONS.map((n) => `<option value="${n}" ${n === String(splitPeople) ? "selected" : ""}>${n}人</option>`).join("")}
+        </select>
       </label>
       <strong>1人あたり: ¥${perPerson.toLocaleString()}</strong>
     </div>
@@ -3487,7 +3540,7 @@ function renderAllDayCostSummaries() {
 
 function applyTripSplitPeopleInput(inputEl, { save = false } = {}) {
   if (!inputEl) return;
-  const normalized = String(Math.max(1, Number(normalizeCostAmountValue(inputEl.value || "1")) || 1));
+  const normalized = normalizePointCostPeopleValue(inputEl.value || "1");
   inputEl.value = normalized;
   state.costSplitPeople = Number(normalized);
   if (save) {
@@ -3547,8 +3600,9 @@ function buildRouteListHtmlForDay(dayIndex) {
           <div class="route-actions route-point-cost-row ${point.costExpanded ? "" : "hidden"}" style="${point.costExpanded ? "display:grid;" : "display:none;"}">
             ${
               costItems
-                .map((item) => {
+                .map((item, idx) => {
                   const costKey = `${dayIndex}:${sourceIndex}:${encodeURIComponent(item.id)}`;
+                  const addKey = `${dayIndex}:${sourceIndex}`;
                   return `
                     <div class="point-cost-item-row">
                       <select class="tiny" data-point-cost-type="${costKey}">
@@ -3560,12 +3614,12 @@ function buildRouteListHtmlForDay(dayIndex) {
                         ${buildCostPeopleOptions(item.people)}
                       </select>
                       <button type="button" class="ghost tiny" data-remove-point-cost="${costKey}">削除</button>
+                      <button type="button" class="ghost tiny ${idx === costItems.length - 1 ? "" : "hidden"}" data-add-point-cost="${addKey}">+</button>
                     </div>
                   `;
                 })
                 .join("")
             }
-            <button type="button" class="ghost tiny" data-add-point-cost="${dayIndex}:${sourceIndex}">+ 項目追加</button>
           </div>
           <div class="route-history-dropdown ${state.activeHistoryDropdownIndex === key ? "" : "hidden"}">
             ${
@@ -4415,6 +4469,12 @@ document.addEventListener("click", (e) => {
     return;
   }
 
+  const destinationCostToggleBtn = e.target.closest("button[data-day-role='destination-cost-toggle']");
+  if (destinationCostToggleBtn) {
+    window.handleGoalCostToggleClick(e, destinationCostToggleBtn);
+    return;
+  }
+
   const noteArea = e.target.closest(
     "textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note]",
   );
@@ -5197,7 +5257,7 @@ document.addEventListener("focusin", (e) => {
 
 document.addEventListener("focusin", (e) => {
   const textField = e.target.closest(
-    "textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note], input[data-day-role='origin-input'], input[data-day-role='destination-input'], input[data-point-input], input[data-point-url], input[data-point-cost-amount], input[data-extra-cost-amount], input[data-segment-cost-input], input[data-trip-split-people]",
+    "textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note], input[data-day-role='origin-input'], input[data-day-role='destination-input'], input[data-point-input], input[data-point-url], input[data-point-cost-amount], input[data-extra-cost-amount], input[data-segment-cost-input], input[data-trip-split-people], select[data-trip-split-people]",
   );
   if (!textField) return;
   if (state.undoTypingClearTimer) {
@@ -5213,7 +5273,7 @@ document.addEventListener("focusin", (e) => {
 
 document.addEventListener("focusout", (e) => {
   const textField = e.target.closest(
-    "textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note], input[data-day-role='origin-input'], input[data-day-role='destination-input'], input[data-point-input], input[data-point-url], input[data-point-cost-amount], input[data-extra-cost-amount], input[data-segment-cost-input], input[data-trip-split-people]",
+    "textarea[data-day-role='origin-note-input'], textarea[data-day-role='destination-note-input'], textarea[data-point-note], input[data-day-role='origin-input'], input[data-day-role='destination-input'], input[data-point-input], input[data-point-url], input[data-point-cost-amount], input[data-extra-cost-amount], input[data-segment-cost-input], input[data-trip-split-people], select[data-trip-split-people]",
   );
   if (!textField) return;
   const leavingKey = getUndoFieldKey(textField);
@@ -5317,16 +5377,6 @@ routeEventsHost.addEventListener("click", (e) => {
   if (disabledSegmentBtn) {
     const reason = disabledSegmentBtn.dataset.segmentReason || "区間ルートを生成できません。";
     setStatus(reason, true);
-    return;
-  }
-
-  const destinationCostToggleInDaySections = e.target.closest("button[data-day-role='destination-cost-toggle']");
-  if (destinationCostToggleInDaySections) {
-    const dayIndex = resolveDayIndexFromGoalCostButton(destinationCostToggleInDaySections);
-    if (dayIndex >= 0) {
-      toggleDayGoalCostAccordion(dayIndex);
-    }
-    e.stopPropagation();
     return;
   }
 
@@ -5817,7 +5867,7 @@ routeEventsHost.addEventListener("input", (e) => {
     return;
   }
 
-  const tripSplitInput = e.target.closest("input[data-trip-split-people]");
+  const tripSplitInput = e.target.closest("[data-trip-split-people]");
   if (tripSplitInput) {
     applyTripSplitPeopleInput(tripSplitInput, { save: true });
     return;
@@ -6048,13 +6098,13 @@ routeEventsHost.addEventListener("drop", (e) => {
 });
 
 document.addEventListener("input", (e) => {
-  const splitInput = e.target.closest("input[data-trip-split-people]");
+  const splitInput = e.target.closest("[data-trip-split-people]");
   if (!splitInput) return;
   applyTripSplitPeopleInput(splitInput, { save: false });
 });
 
 document.addEventListener("change", (e) => {
-  const splitInput = e.target.closest("input[data-trip-split-people]");
+  const splitInput = e.target.closest("[data-trip-split-people]");
   if (!splitInput) return;
   applyTripSplitPeopleInput(splitInput, { save: true });
 });

@@ -14,7 +14,7 @@
       href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20260306-2" />
   </head>
   <body>
     <div class="glow"></div>
@@ -37,20 +37,36 @@
       <div id="day-sections" class="stack">
       <section class="card">
         <div class="section-head day-card-head">
-          <div class="day-title">
+          <div class="day-head-top">
+            <div class="day-title">
+              <div class="day-title-main">
+                <input type="checkbox" class="day-complete-check" aria-label="DAY完了" />
+                <h2>DAY1</h2>
+              </div>
+            </div>
+            <div class="input-tools day-actions">
+              <button type="button" id="add-route-point" class="day-card-add icon-btn" aria-label="DAY追加" title="DAY追加">＋</button>
+              <button type="button" class="ghost tiny day-clear-btn icon-btn" aria-label="このDAYをクリア" title="このDAYをクリア">C</button>
+              <button type="button" id="delete-route-day" class="ghost tiny day-card-delete icon-btn" aria-label="削除" title="削除">✕</button>
+              <button type="button" class="ghost tiny day-move-up-btn icon-btn" aria-label="DAYを上へ" title="DAYを上へ">↑</button>
+              <button type="button" class="ghost tiny day-move-down-btn icon-btn" aria-label="DAYを下へ" title="DAYを下へ">↓</button>
+              <button type="button" class="ghost tiny day-export-btn day-io-mini-btn" aria-label="書き出し" title="書き出し">
+                <span class="day-io-mini-icon" aria-hidden="true">→|</span>
+              </button>
+              <button type="button" class="ghost tiny day-import-btn day-io-mini-btn" aria-label="読み込み" title="読み込み">
+                <span class="day-io-mini-icon" aria-hidden="true">|←</span>
+              </button>
+            </div>
+          </div>
+          <div class="day-head-bottom">
             <button type="button" class="ghost tiny day-accordion-toggle icon-btn" aria-label="DAY開閉" title="DAY開閉">▼</button>
-            <h2>DAY1</h2>
-          </div>
-          <div class="day-route-actions">
-            <button type="button" class="ghost tiny" data-open-day-full-route>GoogleMap</button>
-            <button type="button" class="ghost tiny" data-open-day-full-route-yahoo>Yahooナビ</button>
-            <select class="tiny" data-day-role="day-header-time-select" aria-label="予測時間">
-              <option value="">予測時間</option>
-            </select>
-          </div>
-          <div class="input-tools day-actions">
-            <button type="button" id="add-route-point" class="day-card-add icon-btn" aria-label="DAY追加" title="DAY追加">＋</button>
-            <button type="button" id="delete-route-day" class="ghost tiny day-card-delete icon-btn" aria-label="削除" title="削除">✕</button>
+            <div class="day-route-actions">
+              <button type="button" class="ghost tiny" data-open-day-full-route>GoogleMap</button>
+              <button type="button" class="ghost tiny" data-open-day-full-route-yahoo>Yahooナビ</button>
+              <select class="tiny" data-day-role="day-header-time-select" aria-label="予測時間">
+                <option value="">予測時間</option>
+              </select>
+            </div>
           </div>
         </div>
         <div class="section-head">
@@ -127,7 +143,7 @@
               <button type="button" id="destination-history-btn" data-day-role="destination-history-btn">履歴</button>
               <button type="button" id="destination-history-edit-btn" data-day-role="destination-history-edit-btn" class="origin-edit-btn" aria-label="履歴編集">☰</button>
               <button type="button" id="destination-url-suggest-btn" class="ghost">MAP</button>
-              <button type="button" data-day-role="destination-cost-toggle" class="ghost tiny" onclick="return window.handleGoalCostToggleClick && window.handleGoalCostToggleClick(this);">金額</button>
+              <button type="button" data-day-role="destination-cost-toggle" class="ghost tiny">金額</button>
               <button type="button" data-day-role="destination-note-toggle" class="ghost tiny">備考</button>
             </div>
             <div data-day-role="destination-note-wrap" class="hidden">
@@ -207,6 +223,6 @@
 
     <button type="button" id="undo-action-btn" class="undo-action-btn" aria-label="動作を戻す" title="動作を戻す">↩︎</button>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=20260306-2"></script>
   </body>
 </html>
